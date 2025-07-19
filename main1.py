@@ -61,21 +61,33 @@ def split_response(text: str, max_len=4000):
     parts.append(text)
     return parts
 
-# === AI Handler for All Chats ===
+# === AI Handler ===
 @app.on_message(filters.text)
 async def ai_handler(client: Client, message: Message):
-    user_input = message.text
+    chat_type = message.chat.type.name
+
+    # === DM: always respond ===
+    if chat_type == "PRIVATE":
+        user_input = message.text
+
+    # === Group/Channel: respond only if starts with /ai ===
+    else:
+        if not message.text.startswith("/ai"):
+            return
+        user_input = message.text[len("/ai"):].strip()
+        if not user_input:
+            await message.reply("❗ Please provide a prompt after `/ai`.")
+            return
 
     await client.send_chat_action(message.chat.id, ChatAction.TYPING)
 
-    # Initial reply
     thinking_msg = await message.reply("🧠 *Thinking...*", quote=True)
 
-    # Get Gemini response
+    # Get AI response
     ai_response = get_gemini_flash_response(user_input)
     parts = split_response(ai_response)
 
-    # Send response (edit or split if needed)
+    # Send response
     try:
         if len(parts) == 1:
             final_text = f"{parts[0]}\n\n✨ Powered by {BOT_OWNER}"
@@ -93,7 +105,6 @@ async def ai_handler(client: Client, message: Message):
     try:
         user = message.from_user
         user_info = f"[{user.first_name}](tg://user?id={user.id}) (`{user.id}`)"
-        chat_type = message.chat.type.name
         await client.send_message(
             LOG_CHANNEL_ID,
             f"📝 **New Prompt** from {user_info}\n"
@@ -105,5 +116,5 @@ async def ai_handler(client: Client, message: Message):
         logging.warning(f"Failed to log message: {e}")
 
 if __name__ == "__main__":
-    print("🚀 Gemini Bot is running with log support and split-message fix...")
+    print("🚀 Gemini Bot is running with /ai command support in groups...")
     app.run()
