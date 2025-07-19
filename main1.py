@@ -9,18 +9,18 @@ from pyrogram.enums import ChatAction
 # === CONFIG ===
 API_ID = 22118129
 API_HASH = "43c66e3314921552d9330a4b05b18800"
-BOT_TOKEN = "7252664374:AAG-DTJZN5WUQRTZd7yLrDCEIlrYZJ6xxGw"  # Unified bot token (same as ai2.py)
+BOT_TOKEN = "7252664374:AAG-DTJZN5WUQRTZd7yLrDCEIlrYZJ6xxGw"
 GEMINI_API_KEY = "AIzaSyBcoZN2N2TKJeaWExZG9vT7hYU7K1--Tgw"
 BOT_OWNER = "@andr0idpie9"
 LOG_CHANNEL_ID = -1002843745742
 
-# === Setup Logger ===
+# === Logger Setup ===
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 
 # === Initialize Bot ===
 app = Client("CombinedBot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# === Gemini Flash API ===
+# === Gemini API Function ===
 def get_gemini_flash_response(prompt: str) -> str:
     url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
     headers = {
@@ -43,6 +43,7 @@ def get_gemini_flash_response(prompt: str) -> str:
         logging.error(f"Gemini API Error: {e}")
         return "⚠️SYSTEM PE LOAD HAI BHAI!"
 
+# === Response Splitter ===
 def split_response(text: str, max_len=4000):
     parts = []
     while len(text) > max_len:
@@ -54,8 +55,12 @@ def split_response(text: str, max_len=4000):
     parts.append(text)
     return parts
 
+# === Gemini Handler ===
 @app.on_message(filters.text)
 async def ai_handler(client: Client, message: Message):
+    if message.text.startswith("/chk"):
+        return  # Ignore /chk messages in AI handler
+
     chat_type = message.chat.type.name
 
     if chat_type == "PRIVATE":
@@ -121,7 +126,7 @@ def get_bin_info(bin_code):
         logging.error(f"BIN lookup error: {e}")
         return "Unknown", "Unknown", "N/A"
 
-@app.on_message(filters.command("chk") & filters.private)
+@app.on_message(filters.command("chk"))
 async def check_card(client: Client, message: Message):
     match = re.search(CC_REGEX, message.text)
     if not match:
@@ -161,7 +166,7 @@ async def check_card(client: Client, message: Message):
         f"⌯ 𝐈𝐬𝐬𝐮𝐞𝐫 ➳ {bank}\n"
         f"⌯ 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ➳ {country}\n\n"
         f"⌯ 𝐑𝐞𝐪𝐮𝐞𝐬𝐭 𝐁𝐲 ➳ @{message.from_user.username}\n"
-        f"⌯ 𝐃𝐞𝐯 ⌁ @andr0idpie9\n"
+        f"⌯ 𝐃𝐞𝐯 ⌁ {BOT_OWNER}\n"
         f"⌯ 𝗧𝗶𝗺𝗲 ➳ {elapsed} 𝐬𝐞𝐜𝐨𝐧𝐝𝐬"
     )
 
