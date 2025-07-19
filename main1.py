@@ -1,6 +1,7 @@
 import logging
 import re
 import time
+import random
 import requests
 from pyrogram import Client, filters
 from pyrogram.types import Message
@@ -72,19 +73,43 @@ def get_bin_info(bin_code):
     try:
         response = requests.get(BIN_API_URL.format(bin_code), timeout=10)
         if response.status_code != 200:
-            return "Unknown", "Unknown", "N/A"
+            return "Unknown", "Unknown", "N/A", "Unknown", "Unknown"
 
         data = response.json()
         brand = data.get("brand", "Unknown")
         bank = data.get("bank", "Unknown")
         country = data.get("country_name", "Unknown")
         flag = data.get("country_flag", "")
+        card_type = data.get("type", "Unknown")
 
-        return brand, bank, f"{country} {flag}" if country != "Unknown" else "N/A"
+        return brand, bank, f"{country} {flag}" if country != "Unknown" else "N/A", card_type
 
     except Exception as e:
         logging.error(f"BIN lookup error: {e}")
-        return "Unknown", "Unknown", "N/A"
+        return "Unknown", "Unknown", "N/A", "Unknown"
+
+# === Generate CC Function ===
+def generate_cc(bin_code, count=10):
+    if count > 50:
+        count = 50
+    elif count < 1:
+        count = 1
+        
+    cc_list = []
+    for _ in range(count):
+        # Generate random card number (bin + 10 digits)
+        card_number = bin_code + ''.join([str(random.randint(0, 9)) for _ in range(10)])
+        
+        # Generate random expiry (month between 1-12, year between current year + 1 to +10)
+        month = str(random.randint(1, 12)).zfill(2)
+        year = str(random.randint(time.localtime().tm_year + 1, time.localtime().tm_year + 10))
+        
+        # Generate random CVV (3-4 digits)
+        cvv = str(random.randint(100, 9999)).zfill(3 if len(cvv) == 3 else 4)
+        
+        cc_list.append(f"{card_number}|{month}|{year}|{cvv}")
+    
+    return cc_list
 
 # === Log to Channel Function ===
 async def log_to_channel(client: Client, log_type: str, message: Message, content: str, result: str = None):
@@ -106,6 +131,13 @@ async def log_to_channel(client: Client, log_type: str, message: Message, conten
                 f"**Chat Type:** `{chat_type}`\n"
                 f"**Card:** `{content}`\n"
                 f"**Result:** {result}"
+            )
+        elif log_type == "GEN":
+            log_text = (
+                f"🔄 **New CC Generation** from {user_info}\n"
+                f"**Chat Type:** `{chat_type}`\n"
+                f"**BIN:** `{content}`\n"
+                f"**Count:** {result}"
             )
         
         await client.send_message(LOG_CHANNEL_ID, log_text)
@@ -202,6 +234,65 @@ async def check_card(client: Client, message: Message):
     # Log to channel
     await log_to_channel(client, "CC", message, card, status)
 
+# === CC Generator Handler ===
+@app.on_message(filters.command("gen", prefixes="/"))
+async def generate_cc_handler(client: Client, message: Message):
+    try:
+        parts = message.text.split()
+        if len(parts) < 2:
+            await message.reply("❗ Please provide a BIN after /gen\nExample: `/gen 511253` or `/gen 511253 5`")
+            return
+
+        bin_code = parts[1]
+        if not bin_code.isdigit() or len(bin_code) < 6:
+            await message.reply("❗ Invalid BIN. Must be at least 6 digits.")
+            return
+
+        # Get count if provided
+        count = 10  # default
+        if len(parts) > 2:
+            try:
+                count = int(parts[2])
+                if count > 50:
+                    count = 50
+                    await message.reply("⚠️ Maximum count is 50. Generating 50 CCs.")
+                elif count < 1:
+                    count = 1
+            except ValueError:
+                await message.reply("❗ Invalid count. Using default 10 CCs.")
+
+        # Show generating message
+        proc_msg = await message.reply(f"🔹 Generating {count} CCs...")
+
+        # Generate CCs
+        cc_list = generate_cc(bin_code[:6], count)
+
+        # Get BIN info
+        brand, bank, country, card_type = get_bin_info(bin_code[:6])
+
+        # Format response
+        cc_text = "\n".join(cc_list)
+        response_text = (
+            f"Generated {count} CCs 💳\n\n"
+            f"{cc_text}\n\n"
+            f"BIN-LOOKUP\n"
+            f"BIN ➳ {bin_code[:6]}\n"
+            f"Country ➳ {country}\n"
+            f"Type ➳ {card_type}\n"
+            f"Bank ➳ {bank}\n\n"
+            f"⌯ 𝐑𝐞𝐪𝐮𝐞𝐬𝐭 𝐁𝐲 ➳ @{message.from_user.username}\n"
+            f"⌯ 𝐃𝐞𝐯 ⌁ @andr0idpie9"
+        )
+
+        await proc_msg.edit(response_text)
+        
+        # Log to channel
+        await log_to_channel(client, "GEN", message, bin_code[:6], count)
+
+    except Exception as e:
+        logging.error(f"CC generation error: {e}")
+        await message.reply(f"❌ Error generating CCs: {e}")
+
 if __name__ == "__main__":
-    print("🚀 Combined Bot is running with /ai and /chk commands...")
+    print("🚀 Combined Bot is running with /ai, /chk and /gen commands...")
     app.run()
