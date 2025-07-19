@@ -103,11 +103,10 @@ def generate_cc(bin_code, count=10):
         month = str(random.randint(1, 12)).zfill(2)
         year = str(random.randint(time.localtime().tm_year + 1, time.localtime().tm_year + 10))
         
-        # Generate random CVV (3-4 digits)
-        cvv_length = random.choice([3, 4])
-        cvv = str(random.randint(100, 9999)).zfill(cvv_length)
+        # Generate random 3-digit CVV
+        cvv = str(random.randint(100, 999))
         
-        cc_list.append(f"{card_number}|{month}|{year}|{cvv}")
+        cc_list.append(f"`{card_number}|{month}|{year}|{cvv}`")
     
     return cc_list
 
@@ -181,7 +180,7 @@ async def ai_handler(client: Client, message: Message):
 async def check_card(client: Client, message: Message):
     match = re.search(CC_REGEX, message.text)
     if not match:
-        await message.reply("Invalid format. Use: /chk xxxxxxxxxxxxxxxx|MM|YYYY|CVV")
+        await message.reply("Invalid format. Use: `/chk xxxxxxxxxxxxxxxx|MM|YYYY|CVV`")
         return
 
     card = match.group(1)
@@ -190,8 +189,8 @@ async def check_card(client: Client, message: Message):
     # Send initial "processing" message
     proc_msg = await message.reply_text(
         f"↯ Checking..\n\n"
-        f"⌯ 𝐂𝐚𝐫𝐝 - {card}\n"
-        f"⌯ 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 -  {GATEWAY_NAME}\n"
+        f"⌯ 𝐂𝐚𝐫𝐝 - `{card}`\n"
+        f"⌯ 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 - `{GATEWAY_NAME}`\n"
         f"⌯ 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 - Processing"
     )
 
@@ -218,9 +217,9 @@ async def check_card(client: Client, message: Message):
         f"┏━━━━━━━⍟\n"
         f"┃ {status}\n"
         f"┗━━━━━━━━━━━⊛\n\n"
-        f"⌯ 𝗖𝗮𝗿𝗱\n   ↳ {card}\n"
-        f"⌯ 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ➳ {GATEWAY_NAME}\n"
-        f"⌯ 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ➳ {result_text}\n\n"
+        f"⌯ 𝗖𝗮𝗿𝗱\n   ↳ `{card}`\n"
+        f"⌯ 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ➳ `{GATEWAY_NAME}`\n"
+        f"⌯ 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ➳ `{result_text}`\n\n"
         f"⌯ 𝗜𝗻𝗳𝗼 ➳ {brand}\n"
         f"⌯ 𝐈𝐬𝐬𝐮𝐞𝐫 ➳ {bank}\n"
         f"⌯ 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ➳ {country}\n\n"
@@ -240,7 +239,7 @@ async def generate_cc_handler(client: Client, message: Message):
     try:
         parts = message.text.split()
         if len(parts) < 2:
-            await message.reply("❗ Please provide a BIN after /gen\nExample: `/gen 511253` or `/gen 511253 5`")
+            await message.reply("❗ Please provide a BIN after `/gen`\nExample: `/gen 511253` or `/gen 511253 5`")
             return
 
         bin_code = parts[1]
@@ -273,25 +272,25 @@ async def generate_cc_handler(client: Client, message: Message):
         # Format response
         cc_text = "\n".join(cc_list)
         response_text = (
-            f"Generated {count} CCs 💳\n\n"
+            f"**Generated {count} CCs 💳**\n\n"
             f"{cc_text}\n\n"
-            f"BIN-LOOKUP\n"
-            f"BIN ➳ {bin_code[:6]}\n"
-            f"Country ➳ {country}\n"
-            f"Type ➳ {brand}\n"
-            f"Bank ➳ {bank}\n\n"
+            f"**BIN-LOOKUP**\n"
+            f"• BIN ➳ `{bin_code[:6]}`\n"
+            f"• Country ➳ {country}\n"
+            f"• Type ➳ {brand}\n"
+            f"• Bank ➳ {bank}\n\n"
             f"⌯ 𝐑𝐞𝐪𝐮𝐞𝐬𝐭 𝐁𝐲 ➳ @{message.from_user.username}\n"
             f"⌯ 𝐃𝐞𝐯 ⌁ @andr0idpie9"
         )
 
-        await proc_msg.edit(response_text)
+        await proc_msg.edit(response_text, parse_mode="markdown")
         
         # Log to channel
         await log_to_channel(client, "GEN", message, bin_code[:6], count)
 
     except Exception as e:
         logging.error(f"CC generation error: {e}")
-        await message.reply(f"❌ Error generating CCs: {e}")
+        await message.reply(f"❌ Error generating CCs: {str(e)}")
 
 if __name__ == "__main__":
     print("🚀 Combined Bot is running with /ai, /chk and /gen commands...")
