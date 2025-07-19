@@ -73,20 +73,19 @@ def get_bin_info(bin_code):
     try:
         response = requests.get(BIN_API_URL.format(bin_code), timeout=10)
         if response.status_code != 200:
-            return "Unknown", "Unknown", "N/A", "Unknown", "Unknown"
+            return "Unknown", "Unknown", "N/A"
 
         data = response.json()
         brand = data.get("brand", "Unknown")
         bank = data.get("bank", "Unknown")
         country = data.get("country_name", "Unknown")
         flag = data.get("country_flag", "")
-        card_type = data.get("type", "Unknown")
 
-        return brand, bank, f"{country} {flag}" if country != "Unknown" else "N/A", card_type
+        return brand, bank, f"{country} {flag}" if country != "Unknown" else "N/A"
 
     except Exception as e:
         logging.error(f"BIN lookup error: {e}")
-        return "Unknown", "Unknown", "N/A", "Unknown"
+        return "Unknown", "Unknown", "N/A"
 
 # === Generate CC Function ===
 def generate_cc(bin_code, count=10):
@@ -105,7 +104,8 @@ def generate_cc(bin_code, count=10):
         year = str(random.randint(time.localtime().tm_year + 1, time.localtime().tm_year + 10))
         
         # Generate random CVV (3-4 digits)
-        cvv = str(random.randint(100, 9999)).zfill(3 if len(cvv) == 3 else 4)
+        cvv_length = random.choice([3, 4])
+        cvv = str(random.randint(100, 9999)).zfill(cvv_length)
         
         cc_list.append(f"{card_number}|{month}|{year}|{cvv}")
     
@@ -268,7 +268,7 @@ async def generate_cc_handler(client: Client, message: Message):
         cc_list = generate_cc(bin_code[:6], count)
 
         # Get BIN info
-        brand, bank, country, card_type = get_bin_info(bin_code[:6])
+        brand, bank, country = get_bin_info(bin_code[:6])
 
         # Format response
         cc_text = "\n".join(cc_list)
@@ -278,7 +278,7 @@ async def generate_cc_handler(client: Client, message: Message):
             f"BIN-LOOKUP\n"
             f"BIN ➳ {bin_code[:6]}\n"
             f"Country ➳ {country}\n"
-            f"Type ➳ {card_type}\n"
+            f"Type ➳ {brand}\n"
             f"Bank ➳ {bank}\n\n"
             f"⌯ 𝐑𝐞𝐪𝐮𝐞𝐬𝐭 𝐁𝐲 ➳ @{message.from_user.username}\n"
             f"⌯ 𝐃𝐞𝐯 ⌁ @andr0idpie9"
