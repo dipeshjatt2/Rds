@@ -3,6 +3,7 @@ import re
 import time
 import random
 import requests
+import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from pyrogram.enums import ChatAction, ParseMode
@@ -18,6 +19,7 @@ GATEWAY_NAME = "Stripe Auth"
 GATEWAY_URL_TEMPLATE = "https://darkboy-auto-stripe.onrender.com/gateway=autostripe/key=darkboy/site=buildersdiscountwarehouse.com.au/cc={}"
 BIN_API_URL = "https://bins.antipublic.cc/bins/{}"
 CC_REGEX = r"/chk (\d{13,16}\|\d{2}\|\d{2,4}\|\d{3,4})"
+OWNER_ID = 5203820046  # Added owner ID for ping functionality
 
 # === Logging Setup ===
 logging.basicConfig(
@@ -32,6 +34,41 @@ app = Client(
     api_hash=API_HASH,
     bot_token=BOT_TOKEN
 )
+
+# === Ping Message ===
+PING_MESSAGE = """
+`⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤
+⠀⠀⠀⠐⠋⠀⠀⠙⢿⣿⡆⠀⠀⣿⡇⠀⠀⠀⢸⣿⠀⠀⣿⡇
+⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⠀⠀⣿⡇⠀⣠⣶⣾⣿⣿⣿⣿⡇
+⣠⠴⣶⣤⣀⡀⠀⣠⣿⣿⠏⠀⠀⣿⡇⠀⣿⡏⢸⣿⠀⠀⣿⡇
+⠀⠀⠈⠻⣿⣿⣟⠛⠋⠁⠀⠀⠀⣿⡇⠀⠹⣷⣼⣿⠀⠀⣿⡇
+⠀⠀⠀⠀⠈⠻⣿⣷⣄⠀⠀⠀⠀⠿⠷⠀⠀⠉⠛⠉⠀⠀⠿⠿
+⠀⠀⠀⠀⠀⠀⠙⢿⣿⣷⣄⠀⠀⠀⠀⠀⠀⠀⠀⢴⣦
+⠀⠀⠀⠀⠀⠀⠀⠀⠙⢿⣿⣷⣦⣀⠀⠀⠀⠀⢀⣼⡏
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠿⣿⣿⣷⣶⣶⣶⣿⠏
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠙⠛⠋⠉
+
+⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤
+⠀⠀⠀⠐⠋⠀⠀⠙⢿⣿⡆⠀⠀⣿⡇⠀⠀⠀⢸⣿⠀⠀⣿⡇
+⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⠀⠀⣿⡇⠀⣠⣶⣾⣿⣿⣿⣿⡇
+⣠⠴⣶⣤⣀⡀⠀⣠⣿⣿⠏⠀⠀⣿⡇⠀⣿⡏⢸⣿⠀⠀⣿⡇
+⠀⠀⠈⠻⣿⣿⣟⠛⠋⠁⠀⠀⠀⣿⡇⠀⠹⣷⣼⣿⠀⠀⣿⡇
+⠀⠀⠀⠀⠈⠻⣿⣷⣄⠀⠀⠀⠀⠿⠷⠀⠀⠉⠛⠉⠀⠀⠿⠿
+⠀⠀⠀⠀⠀⠀⠙⢿⣿⣷⣄⠀⠀⠀⠀⠀⠀⠀⠀⢴⣦
+⠀⠀⠀⠀⠀⠀⠀⠀⠙⢿⣿⣷⣦⣀⠀⠀⠀⠀⢀⣼⡏
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠿⣿⣿⣷⣶⣶⣶⣿⠏
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠙⠛⠋⠉` 
+"""
+
+# === Background Task for Ping ===
+async def ping_owner():
+    while True:
+        try:
+            await app.send_message(OWNER_ID, PING_MESSAGE)
+            logging.info("Ping message sent to owner")
+        except Exception as e:
+            logging.error(f"Failed to send ping: {e}")
+        await asyncio.sleep(300)  # 5 minutes = 300 seconds
 
 # === Gemini Flash API Function ===
 def get_gemini_flash_response(prompt: str) -> str:
@@ -291,7 +328,8 @@ async def generate_cc_handler(client: Client, message: Message):
     except Exception as e:
         logging.error(f"CC generation error: {e}")
         await message.reply(f"❌ Error generating CCs: {str(e)}")
-        # === Start Command Handler ===
+
+# === Start Command Handler ===
 @app.on_message(filters.command("start"))
 async def start_handler(client: Client, message: Message):
     welcome_msg = f"""
@@ -319,6 +357,12 @@ async def start_handler(client: Client, message: Message):
 🔥 **Start exploring by sending a command above!** 🔥
 """
     await message.reply(welcome_msg, parse_mode=ParseMode.MARKDOWN)
+
+# === Startup Handler ===
+@app.on_startup()
+async def startup():
+    # Start the ping task when bot starts
+    asyncio.create_task(ping_owner())
 
 if __name__ == "__main__":
     print("🚀 Combined Bot is running with /ai, /chk and /gen commands...")
