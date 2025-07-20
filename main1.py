@@ -89,8 +89,8 @@ def get_bin_info(bin_code):
 
 # === Generate CC Function ===
 def generate_cc(bin_code, count=10):
-    if count > 50:
-        count = 50
+    if count > 100:
+        count = 100
     elif count < 1:
         count = 1
         
