@@ -252,7 +252,7 @@ async def generate_cc_handler(client: Client, message: Message):
         if len(parts) > 2:
             try:
                 count = int(parts[2])
-                if count > 50:
+                if count > 1000:
                     count = 50
                     await message.reply("⚠️ Maximum count is 50. Generating 50 CCs.")
                 elif count < 1:
