@@ -291,6 +291,34 @@ async def generate_cc_handler(client: Client, message: Message):
     except Exception as e:
         logging.error(f"CC generation error: {e}")
         await message.reply(f"❌ Error generating CCs: {str(e)}")
+        # === Start Command Handler ===
+@app.on_message(filters.command("start"))
+async def start_handler(client: Client, message: Message):
+    welcome_msg = f"""
+🌟 **Welcome to {GATEWAY_NAME} Bot** 🌟
+
+⚡ **A Multi-Purpose Bot with Powerful Features:**
+
+✓ **AI Assistant** - Get smart responses with `/ai <your query>`
+✓ **CC Checker** - Validate cards with `/chk <card details>`
+✓ **CC Generator** - Generate test cards with `/gen <BIN>`
+
+🔹 **Example Commands:**
+- `/ai explain quantum computing`
+- `/chk 4111111111111111|12|2025|123`
+- `/gen 511253 5` (generates 5 cards with BIN 511253)
+
+📌 **Bot Features:**
+- Fast and reliable
+- Secure processing
+- Detailed responses
+
+👨‍💻 **Developer:** {BOT_OWNER}
+🛠 **Support:** Contact dev for issues
+
+🔥 **Start exploring by sending a command above!** 🔥
+"""
+    await message.reply(welcome_msg, parse_mode=ParseMode.MARKDOWN)
 
 if __name__ == "__main__":
     print("🚀 Combined Bot is running with /ai, /chk and /gen commands...")
