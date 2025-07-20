@@ -4,7 +4,7 @@ import time
 import random
 import requests
 import asyncio
-from pyrogram import Client, filters
+from pyrogram import Client, filters, idle
 from pyrogram.types import Message
 from pyrogram.enums import ChatAction, ParseMode
 
@@ -19,7 +19,7 @@ GATEWAY_NAME = "Stripe Auth"
 GATEWAY_URL_TEMPLATE = "https://darkboy-auto-stripe.onrender.com/gateway=autostripe/key=darkboy/site=buildersdiscountwarehouse.com.au/cc={}"
 BIN_API_URL = "https://bins.antipublic.cc/bins/{}"
 CC_REGEX = r"/chk (\d{13,16}\|\d{2}\|\d{2,4}\|\d{3,4})"
-OWNER_ID = 5203820046  # Added owner ID for ping functionality
+OWNER_ID = 5203820046
 
 # === Logging Setup ===
 logging.basicConfig(
@@ -329,8 +329,8 @@ async def generate_cc_handler(client: Client, message: Message):
         logging.error(f"CC generation error: {e}")
         await message.reply(f"❌ Error generating CCs: {str(e)}")
 
-# === Start Command Handler ===
-@app.on_message(filters.command("start"))
+# === Start Handler ===
+@app.on_message(filters.command("start") & filters.private)
 async def start_handler(client: Client, message: Message):
     welcome_msg = f"""
 🌟 **Welcome to {GATEWAY_NAME} Bot** 🌟
@@ -358,12 +358,18 @@ async def start_handler(client: Client, message: Message):
 """
     await message.reply(welcome_msg, parse_mode=ParseMode.MARKDOWN)
 
-# === Startup Handler ===
-@app.on_startup()
-async def startup():
+# === Startup Task ===
+async def startup_task():
     # Start the ping task when bot starts
     asyncio.create_task(ping_owner())
 
+# === Main Function ===
+async def main():
+    await app.start()
+    await startup_task()
+    await idle()
+
 if __name__ == "__main__":
     print("🚀 Combined Bot is running with /ai, /chk and /gen commands...")
-    app.run()
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())
