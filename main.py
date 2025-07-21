@@ -375,7 +375,7 @@ async def mass_cc_generator(client: Client, message: Message):
         # Parse command arguments
         parts = message.text.split()
         if len(parts) < 2:
-            await message.reply("❗ Please provide a BIN after `/mgen`\nExample: `/mgen 541174` or `/mgen 541174 50000`")
+            await message.reply("❗ Please provide a BIN after `/mgen`\nExample: `/mgen 541174` or `/mgen 541174 500`")
             return
 
         bin_code = parts[1]
@@ -383,20 +383,20 @@ async def mass_cc_generator(client: Client, message: Message):
             await message.reply("❗ Invalid BIN. Must be at least 6 digits.")
             return
 
-        # Get count if provided (default 10000, max 1000000)
-        count = 10000
+        # Get count if provided (default 100, max 10000)
+        count = 100
         if len(parts) > 2:
             try:
                 count = int(parts[2])
-                if count > 1000000:
-                    count = 1000000
-                    await message.reply("⚠️ Maximum count is 1,000,000. Generating 1M CCs.")
-                elif count < 1:
+                if count > 10000:
                     count = 10000
+                    await message.reply("⚠️ Maximum count is 10,000. Generating 10K CCs.")
+                elif count < 1:
+                    count = 100
             except ValueError:
-                await message.reply("❗ Invalid count. Using default 10,000 CCs.")
+                await message.reply("❗ Invalid count. Using default 100 CCs.")
 
-        # Show generating message
+        # Show generating message (will be deleted later)
         proc_msg = await message.reply(f"🔹 Generating {count} CCs via API... This may take a while for large counts.")
 
         # Call the API
@@ -419,34 +419,43 @@ async def mass_cc_generator(client: Client, message: Message):
         username = message.from_user.username or str(message.from_user.id)
         filename = f"ccgen_{bin_code[:6]}by@{username}.txt"
 
-        # Prepare file content
-        file_content = f"Generated {count} CCs 💳\n"
-        file_content += "━━━━━━━━━━━━━━━━━━\n"
-        file_content += f"BIN ➳ {bin_code[:6]}\n"
-        file_content += f"Country ➳ {country}\n"
-        file_content += f"Type ➳ {brand}\n"
-        file_content += f"Bank ➳ {bank}\n"
-        file_content += "━━━━━━━━━━━━━━━━━━\n\n"
-        file_content += "\n".join(cc_list)
+        # Prepare file content (just the CCs, no headers)
+        file_content = "\n".join(cc_list)
 
         # Save to file
         with open(filename, "w") as f:
             f.write(file_content)
 
-        # Send document
-        await message.reply_document(
-            document=filename,
-            caption=f"✅ Generated {count} CCs with BIN {bin_code[:6]}",
-            quote=True
+        # Prepare caption with BIN info
+        caption = (
+            f"Generated {count} CCs 💳\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"BIN ➳ {bin_code[:6]}\n"
+            f"Country ➳ {country}\n"
+            f"Type ➳ {brand}\n"
+            f"Bank ➳ {bank}\n"
+            f"━━━━━━━━━━━━━━━━━━"
         )
 
-        # Delete the file
-        os.remove(filename)
+        # Send document and delete processing message
+        await message.reply_document(
+            document=filename,
+            caption=caption,
+            quote=True
+        )
         await proc_msg.delete()
 
+        # Delete the file
+        import os
+        os.remove(filename)
+
     except Exception as e:
-        logging.error(f"Mass CC generation error: {e}")
-        await message.reply(f"❌ Error generating CCs: {str(e)}")
+        # If there was an error but file was uploaded, don't show error
+        if 'filename' in locals() and os.path.exists(filename):
+            await proc_msg.delete()
+        else:
+            logging.error(f"Mass CC generation error: {e}")
+            await message.reply(f"❌ Error generating CCs: {str(e)}")    
         
 @app.on_message(filters.command("fake", prefixes="/"))
 async def fake_identity_generator(client: Client, message: Message):
