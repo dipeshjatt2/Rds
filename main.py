@@ -71,6 +71,11 @@ async def ping_owner():
             logging.error(f"Failed to send ping: {e}")
         await asyncio.sleep(300)  # 5 minutes = 300 seconds
 
+def random_string(length):
+    """Generate a random lowercase string of specified length"""
+    letters = string.ascii_lowercase
+    return ''.join(random.choice(letters) for _ in range(length))
+
 # === Gemini Flash API Function ===
 def get_gemini_flash_response(prompt: str) -> str:
     url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
