@@ -1485,6 +1485,7 @@ async def mass_check_handler(client: Client, message: Message):
             "𝗠𝗮𝘀𝘀 𝗖𝗵𝗲𝗰𝗸\n"
             "──────── ⸙ ─────────\n"
             "Starting mass check...".format(len(cc_list), len(cc_list))
+        )    
         
         start_time = time.time()
         results = []
