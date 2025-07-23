@@ -1465,9 +1465,9 @@ async def mass_check_handler(client: Client, message: Message):
             return
 
         # Limit to 200 CCs max
-        if len(cc_list) > 200:
-            cc_list = cc_list[:200]
-            await message.reply("⚠️ Maximum 200 CCs allowed. Checking first 200.")
+        if len(cc_list) > 2000:
+            cc_list = cc_list[:2000]
+            await message.reply("⚠️ Maximum 2000 CCs allowed. Checking first 2000.")
 
         # Get BIN info from first CC
         bin_code = cc_list[0][:6]
