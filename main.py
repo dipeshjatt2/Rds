@@ -1525,7 +1525,7 @@ async def mass_check_handler(client: Client, message: Message):
                     'https://takeshi-j8i9.onrender.com/check_card',
                     headers=headers,
                     json=json_data,
-                    timeout=20
+                    timeout=2000
                 )
                 
                 response_json = response.json()
