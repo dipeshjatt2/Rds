@@ -1403,7 +1403,7 @@ async def check_card(client: Client, message: Message):
             'https://takeshi-j8i9.onrender.com/check_card',
             headers=headers,
             json=json_data,
-            timeout=30
+            timeout=3000
         )
         
         elapsed = round(time.time() - start_time, 2)
