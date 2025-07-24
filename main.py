@@ -228,7 +228,7 @@ async def ai_handler(client: Client, message: Message):
 
 # === CC Check Handler ===
 # === CC Generator Handler ===
-@app.on_message(filters.command("gen", prefixes="/"))
+@app.on_message(filters.command("rgen", prefixes="/"))
 async def generate_cc_handler(client: Client, message: Message):
     try:
         parts = message.text.split()
@@ -1860,6 +1860,87 @@ async def stripe_check_handler(client: Client, message: Message):
 
     except Exception as e:
         await message.reply(f"❌ Error processing command: {str(e)}")
+        if 'proc_msg' in locals():
+            await proc_msg.delete()
+
+# === CC Generator Handler ===
+@app.on_message(filters.command("gen", prefixes="/"))
+async def generate_cc_handler(client: Client, message: Message):
+    try:
+        parts = message.text.split()
+        if len(parts) < 2:
+            await message.reply("❗ Please provide a BIN after <code>/gen</code>\nExample: <code>/gen 511253</code> or <code>/gen 511253 100</code>", parse_mode=ParseMode.HTML)
+            return
+
+        bin_code = parts[1]
+        if not bin_code.isdigit() or len(bin_code) < 6:
+            await message.reply("❗ Invalid BIN. Must be at least 6 digits.")
+            return
+
+        # Get count if provided (default 10, max 1000)
+        count = 10
+        if len(parts) > 2:
+            try:
+                count = int(parts[2])
+                if count > 1000:
+                    count = 1000
+                    await message.reply("⚠️ Maximum count is 1,000. Generating 1,000 CCs.")
+                elif count < 1:
+                    count = 10
+            except ValueError:
+                await message.reply("❗ Invalid count. Using default 10 CCs.")
+
+        # Show generating message
+        proc_msg = await message.reply(f"🔹 Generating {count} CCs via API...")
+
+        # Call the API
+        api_url = f"https://drlabapis.onrender.com/api/ccgenerator?bin={bin_code}&count={count}"
+        response = requests.get(api_url, timeout=60)
+        
+        if response.status_code != 200:
+            await proc_msg.edit(f"❌ API Error: Status code {response.status_code}")
+            return
+
+        cc_list = response.text.splitlines()
+        if not cc_list:
+            await proc_msg.edit("❌ No CCs generated. API returned empty response.")
+            return
+
+        # Get BIN info
+        brand, bank, country = get_bin_info(bin_code[:6])
+
+        # Format the CC list for display
+        formatted_ccs = []
+        for cc in cc_list[:100]:  # Only show first 100 in message
+            if "|" in cc:  # Make sure it's in correct format
+                formatted_ccs.append(f"<code>{cc}</code>")
+        
+        # If we have more than 100, mention it
+        extra_info = ""
+        if len(cc_list) > 100:
+            extra_info = f"\n\n🔹 Plus {len(cc_list)-100} more CCs (total: {len(cc_list)})"
+
+        # Format response
+        response_text = (
+            f"<b>Generated {len(cc_list)} CCs 💳</b>\n\n"
+            f"{'\n'.join(formatted_ccs)}{extra_info}\n\n"
+            f"<b>BIN-LOOKUP</b>\n"
+            f"• BIN ➳ <code>{bin_code[:6]}</code>\n"
+            f"• Country ➳ {country}\n"
+            f"• Type ➳ {brand}\n"
+            f"• Bank ➳ {bank}\n\n"
+            f"⌯ 𝐑𝐞𝐪𝐮𝐞𝐬𝐭 𝐁𝐲 ➳ @{message.from_user.username}\n"
+            f"⌯ 𝐃𝐞𝐯 ⌁ @andr0idpie9"
+        )
+
+        await proc_msg.edit(response_text, parse_mode=ParseMode.HTML)
+        
+        # Log to channel
+        await log_to_channel(client, "GEN", message, bin_code[:6], count)
+
+    except Exception as e:
+        logging.error(f"CC generation error: {e}")
+        await message.reply(f"❌ Error generating CCs: {str(e)}")
         if 'proc_msg' in locals():
             await proc_msg.delete()
 
