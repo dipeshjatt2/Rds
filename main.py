@@ -44,7 +44,8 @@ app = Client(
 
 # === Ping Message ===
 PING_MESSAGE = """
-```⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤
+```
+⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤
 ⠀⠀⠀⠐⠋⠀⠀⠙⢿⣿⡆⠀⠀⣿⡇⠀⠀⠀⢸⣿⠀⠀⣿⡇
 ⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⠀⠀⣿⡇⠀⣠⣶⣾⣿⣿⣿⣿⡇
 ⣠⠴⣶⣤⣀⡀⠀⣠⣿⣿⠏⠀⠀⣿⡇⠀⣿⡏⢸⣿⠀⠀⣿⡇
@@ -64,7 +65,8 @@ PING_MESSAGE = """
 ⠀⠀⠀⠀⠀⠀⠙⢿⣿⣷⣄⠀⠀⠀⠀⠀⠀⠀⠀⢴⣦
 ⠀⠀⠀⠀⠀⠀⠀⠀⠙⢿⣿⣷⣦⣀⠀⠀⠀⠀⢀⣼⡏
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠿⣿⣿⣷⣶⣶⣶⣿⠏
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠙⠛⠋⠉``` 
+⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠙⠛⠋⠉
+``` 
 """
 
 # === Background Task for Ping ===
@@ -1502,7 +1504,6 @@ async def check_card(client: Client, message: Message):
         )
         await log_to_channel(client, "CC", message, card, f"Error: {error_msg}")
 # === Mass CC Check Handler ===
-# === Mass CC Check Handler ===
 @app.on_message(filters.command("mchk", prefixes="/") & (filters.reply | filters.text))
 async def mass_check_handler(client: Client, message: Message):
     try:
@@ -1514,9 +1515,13 @@ async def mass_check_handler(client: Client, message: Message):
 
         # Extract CCs from the message
         cc_list = []
-        for line in text.split('\n'):
-            if re.match(r"\d{13,16}\|\d{2}\|\d{2,4}\|\d{3,4}", line.strip()):
-                cc_list.append(line.strip())
+        lines = text.split('\n') if message.reply_to_message else message.text.split('\n')[1:]  # Skip command line
+        for line in lines:
+            line = line.strip()
+            if re.match(r"\d{13,16}\|\d{2}\|\d{2,4}\|\d{3,4}", line):
+                cc_list.append(line)
+            elif line:  # Skip empty lines but log unexpected formats
+                logging.warning(f"Skipping invalid line: {line}")
 
         if not cc_list:
             await message.reply("❗ No valid CCs found in the message. Format: `CCN|MM|YY|CVV`")
@@ -1533,15 +1538,15 @@ async def mass_check_handler(client: Client, message: Message):
 
         # Send initial processing message
         processing_msg = await message.reply(
-            "✧ 𝐓𝐨𝐭𝐚𝐥↣0/{}\n"
-            "✧ 𝐂𝐡𝐞𝐜𝐤𝐞𝐝↣0/{}\n"
-            "✧ 𝐀𝐩𝐩𝐫𝐨𝐯𝐞𝐝↣0\n"
-            "✧ 𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝↣0\n"
-            "✧ 𝐄𝐫𝐫𝐨𝐫𝐬↣0\n"
-            "✧ 𝐓𝐢𝐦𝐞↣0.00 𝐒\n\n"
-            "𝗠𝗮𝘀𝘀 𝗖𝗵𝗲𝗰𝗸\n"
-            "──────── ⸙ ─────────\n"
-            "Starting mass check...".format(len(cc_list), len(cc_list))
+            f"✧ 𝐓𝐨𝐭𝐚𝐥↣{len(cc_list)}\n"
+            f"✧ 𝐂𝐡𝐞𝐜𝐤𝐞𝐝↣0\n"
+            f"✧ 𝐀𝐩𝐩𝐫𝐨𝐯𝐞𝐝↣0\n"
+            f"✧ 𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝↣0\n"
+            f"✧ 𝐄𝐫𝐫𝐨𝐫𝐬↣0\n"
+            f"✧ 𝐓𝐢𝐦𝐞↣0.00 𝐒\n\n"
+            f"𝗠𝗮𝘀𝘀 𝗖𝗵𝗲𝗰𝗸\n"
+            f"──────── ⸙ ─────────\n"
+            f"Starting mass check..."
         )
 
         start_time = time.time()
@@ -1555,6 +1560,9 @@ async def mass_check_handler(client: Client, message: Message):
         async def check_single_cc(cc):
             nonlocal checked, approved, declined, errors
             try:
+                if not re.match(r"\d{13,16}\|\d{2}\|\d{2,4}\|\d{3,4}", cc):
+                    raise Exception("Invalid CC format")
+                    
                 cc, mon, year, cvv = cc.split("|")
                 
                 # Use the same logic as /chk command
@@ -1641,8 +1649,8 @@ async def mass_check_handler(client: Client, message: Message):
             if checked % 5 == 0 or checked == len(cc_list):
                 elapsed = time.time() - start_time
                 progress_msg = (
-                    f"✧ 𝐓𝐨𝐭𝐚𝐥↣{len(cc_list)}/{len(cc_list)}\n"
-                    f"✧ 𝐂𝐡𝐞𝐜𝐤𝐞𝐝↣{checked}/{len(cc_list)}\n"
+                    f"✧ 𝐓𝐨𝐭𝐚𝐥↣{len(cc_list)}\n"
+                    f"✧ 𝐂𝐡𝐞𝐜𝐤𝐞𝐝↣{checked}\n"
                     f"✧ 𝐀𝐩𝐩𝐫𝐨𝐯𝐞𝐝↣{approved}\n"
                     f"✧ 𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝↣{declined}\n"
                     f"✧ 𝐄𝐫𝐫𝐨𝐫𝐬↣{errors}\n"
@@ -1657,7 +1665,7 @@ async def mass_check_handler(client: Client, message: Message):
                 except Exception as e:
                     logging.error(f"Error updating progress: {e}")
 
-        # Process CCs with 3 workers (reduced from 5 to avoid rate limiting)
+        # Process CCs with 3 workers
         with ThreadPoolExecutor(max_workers=3) as executor:
             loop = asyncio.get_event_loop()
             tasks = [loop.run_in_executor(executor, lambda cc=cc: asyncio.run(check_single_cc(cc))) for cc in cc_list]
@@ -1749,5 +1757,4 @@ if __name__ == "__main__":
     print("🚀 Combined Bot is running with /ai, /chk and /gen commands...")
     loop = asyncio.get_event_loop()
     loop.run_until_complete(main())
-
- 
+    
