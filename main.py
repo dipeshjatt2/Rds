@@ -1930,7 +1930,7 @@ async def generate_cc_handler(client: Client, message: Message):
             f"• Type ➳ {brand}\n"
             f"• Bank ➳ {bank}\n\n"
             f"⌯ 𝐑𝐞𝐪𝐮𝐞𝐬𝐭 𝐁𝐲 ➳ @{message.from_user.username}\n"
-            f"⌯ 𝐃𝐞𝐯 ⌁ @andr0idpie9"
+            f"⌯ 𝐃𝐞𝐯 ⌁ @andr0idpie9\n"
         
         )
 
