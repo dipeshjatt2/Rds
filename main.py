@@ -1358,6 +1358,15 @@ async def stripe_extended_handler(client: Client, message: Message):
         if 'proc_msg' in locals():  
             await proc_msg.delete()
 
+def parseX(data, start, end):
+    """Helper function to extract text between two strings"""
+    try:
+        star = data.index(start) + len(start)
+        last = data.index(end, star)
+        return data[star:last]
+    except ValueError:
+        return "None"
+
 # === CC Check Handler ===
 @app.on_message(filters.text & filters.regex(CC_REGEX))
 async def check_card(client: Client, message: Message):
