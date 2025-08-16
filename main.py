@@ -359,4 +359,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("🛑 Bot stopped by user")
     finally:
-        asyncio.get_event_loop().run_until_complete(app.stop())dipeshjiop
+        asyncio.get_event_loop().run_until_complete(app.stop())
