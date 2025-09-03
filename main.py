@@ -205,7 +205,7 @@ async def txqz(client, message: Message):
             )
         except Exception as e:
             await message.reply_text(f"❌ Error sending quiz: {str(e)}")
-        await asyncio.sleep(300)  # Small delay to avoid rate limits
+        await asyncio.sleep(5)  # Small delay to avoid rate limits
 
     await message.reply_text("🎉 All quizzes sent!")
 
