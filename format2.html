@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Quiz Arena – Single File</title>
+
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700&display=swap" rel="stylesheet">
+
+<style>
+  :root{
+    --primary:#6C63FF; --secondary:#5A4BFF; --accent:#FF6584;
+    --bg1:#E0EAFC; --bg2:#CFDEF3; --bg-dark1:#0f0c29; --bg-dark2:#302b63; --bg-dark3:#24243e;
+    --text:#20252b; --text-dark:#eef1ff;
+    --glass-light:rgba(255,255,255,.86); --glass-dark:rgba(20,22,45,.86); /* Increased opacity */
+    --success:#28c76f; --danger:#ea5455; --warning:#ff9f43; --muted:rgba(0,0,0,.08);
+    --border:rgba(0,0,0,.08);
+  }
+  *{box-sizing:border-box}
+  body{
+    font-family:'Outfit',sans-serif; color:var(--text);
+    background:linear-gradient(135deg,var(--bg1),var(--bg2));
+    min-height:100vh; margin:0; transition:.25s ease all;
+  }
+  body.dark-mode{ color:var(--text-dark);
+    background:linear-gradient(135deg,var(--bg-dark1),var(--bg-dark2),var(--bg-dark3));
+  }
+
+  .quiz-wrap{max-width:920px;margin:32px auto; padding:0 12px}
+  .quiz-container{
+    background:var(--glass-light); backdrop-filter:blur(16px);
+    border-radius:22px; overflow:hidden;
+    box-shadow:0 10px 40px rgba(31,38,135,.18);
+    border:1px solid var(--border);
+    transition:.25s ease background, .25s ease box-shadow;
+  }
+  body.dark-mode .quiz-container{
+    background:var(--glass-dark);
+    box-shadow:0 16px 50px rgba(0,0,0,.45);
+    border-color:rgba(255,255,255,.08);
+  }
+
+  .quiz-header{
+    background:linear-gradient(90deg,var(--primary),var(--secondary));
+    color:#fff; padding:18px 20px;
+  }
+  .quiz-title{font-weight:700; margin:0}
+  .timer{font-weight:700; font-size:20px}
+
+  .progress{height:8px; margin-top:12px}
+  .question-area{padding:22px}
+  .question-card{
+    background:#fff; border-radius:16px; padding:18px; margin-bottom:18px;
+    box-shadow:0 6px 16px rgba(0,0,0,.08); border:0;
+  }
+  body.dark-mode .question-card{
+    background:rgba(255,255,255,.12); /* Increased opacity for better visibility */
+    color: var(--text-dark); /* Ensure text is visible in dark mode */
+  }
+
+  .q-meta{font-weight:600; opacity:.7; margin-bottom:6px}
+  .q-text{font-size:18px; font-weight:600; margin-bottom:14px}
+
+  .option-btn{
+    width:100%; text-align:left; border:1px solid rgba(0,0,0,.06);
+    background:rgba(255,255,255,.7); border-radius:12px; padding:14px 16px; margin:10px 0;
+    transition:.15s ease; font-size:16px;
+  }
+  .option-btn:hover{transform:translateY(-1px); background:rgba(108,99,255,.12)}
+  .option-btn.selected{background:var(--secondary); color:#fff; border-color:transparent}
+  .option-btn.correct{background:var(--success)!important; color:#fff; border-color:transparent}
+  .option-btn.incorrect{background:var(--danger)!important; color:#fff; border-color:transparent}
+
+  .explanation{
+    background:rgba(0,0,0,.04); border-left:4px solid var(--primary);
+    border-radius:10px; padding:12px 14px; margin-top:10px;
+  }
+  body.dark-mode .explanation{background:rgba(255,255,255,.12)} /* Increased opacity */
+
+  .submit-row{display:flex; justify-content:center; padding:8px 0 16px}
+  .btn-primary{
+    background:var(--primary); border:none; border-radius:28px; padding:10px 24px;
+  }
+  .btn-primary:hover{background:var(--secondary); transform:translateY(-1px)}
+
+  .result-card{display:none; padding:22px}
+  .score-highlight{font-size:40px; font-weight:800; color:var(--primary); text-align:center}
+
+  /* Sidebar question list */
+  .menu-toggle{background:none;border:none;color:#fff;font-size:22px;margin-right:10px}
+  .q-list-panel{
+    position:fixed; top:0; left:-300px; width:280px; height:100vh; z-index:1100;
+    background:var(--glass-light); backdrop-filter:blur(12px); transition:left .25s ease;
+    box-shadow:2px 0 14px rgba(0,0,0,.15); padding:16px;
+  }
+  body.dark-mode .q-list-panel{
+    background:var(--glass-dark);
+    color: var(--text-dark); /* Ensure text is visible in dark mode */
+  }
+  .q-list-panel.show{left:0}
+  .q-list-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:8px}
+  .q-tile{
+    padding:10px; text-align:center; border-radius:10px; 
+    border:1px solid var(--border); font-weight:700; cursor:pointer; 
+    background:rgba(0,0,0,.04);
+    opacity: 0.9; /* Increased opacity for better visibility */
+    color: var(--text); /* Ensure text is visible */
+  }
+  body.dark-mode .q-tile{
+    background:rgba(255,255,255,.15); /* Increased opacity for dark mode */
+    color: var(--text-dark); /* Ensure text is visible in dark mode */
+    border-color: rgba(255,255,255,.15);
+    opacity: 0.9;
+  }
+  .q-tile.active{background:var(--primary); color:#fff; border-color:transparent; opacity: 1;}
+  .q-tile.correct{background:var(--success); color:#fff; border-color:transparent; opacity: 1;}
+  .q-tile.incorrect{background:var(--danger); color:#fff; border-color:transparent; opacity: 1;}
+  .q-tile.unattempted{background:var(--warning); color:#fff; border-color:transparent; opacity: 1;}
+  .overlay{position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:1090; opacity:0; visibility:hidden; transition:.2s}
+  .overlay.show{opacity:1; visibility:visible}
+
+  /* Theme toggle */
+  .theme-toggle{
+    position:fixed; right:18px; bottom:18px; width:54px; height:54px; border-radius:50%;
+    background:var(--primary); color:#fff; border:none; display:flex; align-items:center; justify-content:center;
+    box-shadow:0 8px 24px rgba(0,0,0,.25); z-index:1200; font-size:20px;
+  }
+  body.dark-mode .theme-toggle{background:var(--accent)}
+
+  .chart-container{height:230px}
+  .time-bar{height:8px; background:var(--muted); border-radius:6px; overflow:hidden}
+  .time-fill{height:100%; background:linear-gradient(90deg,var(--primary),var(--secondary))}
+  .badge-chip{border-radius:18px; padding:3px 10px; font-weight:600}
+  .chip-fast{background:rgba(40,199,111,.18); color:var(--success)}
+  .chip-avg{background:rgba(108,99,255,.18); color:var(--primary)}
+  .chip-slow{background:rgba(234,84,85,.18); color:var(--danger)}
+
+  @media (max-width:768px){ .q-list-grid{grid-template-columns:repeat(2,1fr)} }
+</style>
+</head>
+<body>
+
+<!-- sounds -->
+<audio id="clickSound"  src="https://assets.mixkit.co/active_storage/sfx/269/269.wav" preload="auto"></audio>
+<audio id="swipeSound"  src="https://assets.mixkit.co/active_storage/sfx/1897/1897.wav" preload="auto"></audio>
+<audio id="correctSound" src="https://assets.mixkit.co/active_storage/sfx/2870/2870.wav" preload="auto"></audio>
+<audio id="wrongSound"   src="https://assets.mixkit.co/active_storage/sfx/2964/2964.wav" preload="auto"></audio>
+
+<!-- sidebar -->
+<div class="q-list-panel" id="qListPanel">
+  <div class="d-flex justify-content-between align-items-center mb-2">
+    <div class="fw-bold">Questions</div>
+    <button class="btn btn-sm btn-light" id="closeList"><i class="fas fa-times"></i></button>
+  </div>
+  <div class="q-list-grid" id="qList"></div>
+</div>
+<div class="overlay" id="overlay"></div>
+
+<button class="theme-toggle" id="themeToggle"><i class="fas fa-moon"></i></button>
+
+<div class="quiz-wrap">
+  <div class="quiz-container" id="quizContainer">
+    <div class="quiz-header">
+      <div class="d-flex align-items-center justify-content-between">
+        <div class="d-flex align-items-center">
+          <button class="menu-toggle" id="menuToggle"><i class="fas fa-bars"></i></button>
+          <h2 class="quiz-title">Quiz Arena</h2>
+        </div>
+        <div class="timer"><i class="fa-regular fa-clock me-2"></i>
+          <span id="minutes">00</span>:<span id="seconds">00</span></div>
+      </div>
+      <div class="progress">
+        <div id="timeProgress" class="progress-bar progress-bar-striped progress-bar-animated" style="width:100%"></div>
+      </div>
+    </div>
+
+    <div class="question-area">
+      <div id="questionContainer"></div>
+      <div class="submit-row">
+        <button id="submitBtn" class="btn btn-primary btn-lg px-5">
+          <i class="fas fa-paper-plane me-2"></i>Submit
+        </button>
+      </div>
+    </div>
+
+    <div id="resultContainer" class="result-card">
+      <h3 class="text-center fw-bold mb-3">Results</h3>
+      <div class="score-highlight" id="scoreDisplay"></div>
+      <div class="row g-3">
+        <div class="col-md-6">
+          <div class="card h-100">
+            <div class="card-body">
+              <div class="fw-bold mb-2">Score Summary</div>
+              <div class="d-flex justify-content-between mb-2"><span>Total Questions</span><span id="totalQuestions">0</span></div>
+              <div class="d-flex justify-content-between mb-2"><span>Correct</span><span id="correctAnswers" class="text-success fw-bold">0</span></div>
+              <div class="d-flex justify-content-between mb-2"><span>Incorrect</span><span id="incorrectAnswers" class="text-danger fw-bold">0</span></div>
+              <div class="d-flex justify-content-between mb-2"><span>Unattempted</span><span id="unattempted" class="text-warning fw-bold">0</span></div>
+              <div class="d-flex justify-content-between mb-2"><span>Negative Marking</span><span id="negativeMarks" class="text-danger fw-bold">-0.00</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-6">
+          <div class="card h-100">
+            <div class="card-body">
+              <div class="fw-bold mb-2">Performance</div>
+              <div class="chart-container">
+                <canvas id="performanceChart"></canvas>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="col-12">
+          <div class="card">
+            <div class="card-body">
+              <div class="fw-bold mb-2">Time Analysis</div>
+              <div class="chart-container">
+                <canvas id="timeAnalysisChart"></canvas>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="text-center mt-3">
+        <button id="reviewBtn" class="btn btn-primary"><i class="fas fa-search me-2"></i>View Solution</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<!-- ======== REPLACE ONLY THIS BLOCK WITH YOUR DATA ======== -->
+<script>
+const quizData = {
+  // Optional: per-test settings
+  settings: {
+    totalTimeSec: 15 * 60,         // total test time (seconds)
+    negativeMarkPerWrong: 1/3      // negative mark per wrong
+  },
+  questions: [
+    {
+      text: "Which is the capital of Rajasthan?",
+      options: ["Udaipur","Jaipur","Jodhpur","Ajmer"],
+      correctIndex: 1,
+      explanation: "Jaipur is the capital city of Rajasthan.",
+      reference: ""
+    },
+    {
+      text: "Which desert is located in Rajasthan?",
+      options: ["Sahara","Thar","Gobi","Kalahari"],
+      correctIndex: 1,
+      explanation: "The Thar Desert lies in Rajasthan.",
+      reference: ""
+    },
+    {
+      text: "Rajasthan was formed on?",
+      options: ["1947","1950","1949","1956"],
+      correctIndex: 2,
+      explanation: "Rajasthan day: 30 March 1949.",
+      reference: ""
+    },
+    {
+      text: "Viewing a lack of interest for people or things that are generally taken seriously",
+      options: ["Irrespective", "Irreverent", "Submit"],
+      correctIndex: 1,
+      explanation: "Irreverent means showing a lack of respect for things that are generally taken seriously.",
+      reference: ""
+    }
+  ]
+};
+</script>
+<!-- ======================================================== -->
+
+<script>
+(function(){
+  // ----- Config from quizData.settings -----
+  const TOTAL_TIME = (quizData.settings && quizData.settings.totalTimeSec) || 20*60;
+  const NEGATIVE = (quizData.settings && quizData.settings.negativeMarkPerWrong) || (1/3);
+
+  // ----- State -----
+  const state = {
+    current: 0,
+    answers: Array(quizData.questions.length).fill(null),
+    startTime: new Date(),
+    timePerQ: Array(quizData.questions.length).fill(0),
+    submitted: false,
+    inReviewMode: false,
+    darkMode: false,
+    touchStartX: 0, touchEndX: 0,
+    totalTime: TOTAL_TIME,
+    negativeMark: NEGATIVE,
+    avgTime: 0,
+    timerInterval: null,
+    lastSoundIdx: -1
+  };
+
+  // ----- Elements -----
+  const qContainer = document.getElementById('questionContainer');
+  const submitBtn  = document.getElementById('submitBtn');
+  const resultCard = document.getElementById('resultContainer');
+  const qListGrid  = document.getElementById('qList');
+  const qListPanel = document.getElementById('qListPanel');
+  const overlay    = document.getElementById('overlay');
+  const menuToggle = document.getElementById('menuToggle');
+  const closeList  = document.getElementById('closeList');
+  const themeToggle= document.getElementById('themeToggle');
+
+  const clickSound  = document.getElementById('clickSound');
+  const swipeSound  = document.getElementById('swipeSound');
+  const correctSound= document.getElementById('correctSound');
+  const wrongSound  = document.getElementById('wrongSound');
+
+  // ----- Init -----
+  document.addEventListener('DOMContentLoaded', init());
+  function init(){
+    buildQuestionTiles();
+    renderQuestion(0);
+    initTimer();
+    initNav();
+    initTheme();
+  }
+
+  function initNav(){
+    submitBtn.addEventListener('click', submitQuiz);
+    document.getElementById('reviewBtn').addEventListener('click', reviewMode);
+
+    // keyboard
+    document.addEventListener('keydown',(e)=>{
+      if(e.key==='ArrowLeft') go(-1);
+      if(e.key==='ArrowRight') go(1);
+      const n = Number(e.key);
+      if(n>=1 && n<=quizData.questions.length){ if(!state.submitted) updateTime(); renderQuestion(n-1); }
+    });
+
+    // swipe
+    const box = document.getElementById('quizContainer');
+    box.addEventListener('touchstart', e=>{ state.touchStartX = e.changedTouches[0].screenX; }, {passive:true});
+    box.addEventListener('touchend',   e=>{
+      state.touchEndX = e.changedTouches[0].screenX;
+      if(Math.abs(state.touchStartX - state.touchEndX) > 50){
+        // Only play swipe sound if not in review mode
+        if(!state.inReviewMode){ 
+          swipeSound.currentTime=0; 
+          swipeSound.play(); 
+        }
+        go(state.touchStartX > state.touchEndX ? 1 : -1);
+      }
+    }, {passive:true});
+
+    // sidebar
+    const openList=()=>{ qListPanel.classList.add('show'); overlay.classList.add('show'); document.body.style.overflow='hidden'; }
+    const close=()=>{ qListPanel.classList.remove('show'); overlay.classList.remove('show'); document.body.style.overflow=''; }
+    menuToggle.addEventListener('click', openList);
+    closeList.addEventListener('click', close);
+    overlay.addEventListener('click', close);
+  }
+
+  function initTheme(){
+    const saved = localStorage.getItem('qa_theme');
+    if(saved==='dark'){ document.body.classList.add('dark-mode'); state.darkMode=true; }
+    updateThemeIcon();
+    themeToggle.addEventListener('click', ()=>{
+      state.darkMode = !state.darkMode;
+      document.body.classList.toggle('dark-mode', state.darkMode);
+      localStorage.setItem('qa_theme', state.darkMode?'dark':'light');
+      updateThemeIcon();
+      updateTiles(); // Update tiles when theme changes
+    });
+  }
+  function updateThemeIcon(){
+    const i = themeToggle.querySelector('i');
+    i.classList.toggle('fa-moon', !state.darkMode);
+    i.classList.toggle('fa-sun',  state.darkMode);
+  }
+
+  // ----- Timer -----
+  function initTimer(){
+    const start = Date.now();
+    const duration = state.totalTime*1000;
+    const end = start + duration;
+    tick(); state.timerInterval = setInterval(tick, 1000);
+    function tick(){
+      const now = Date.now();
+      const left = Math.max(0, end-now);
+      const m = String(Math.floor(left/60000)).padStart(2,'0');
+      const s = String(Math.floor((left%60000)/1000)).padStart(2,'0');
+      document.getElementById('minutes').textContent = m;
+      document.getElementById('seconds').textContent = s;
+      const pct = (left/duration)*100;
+      const bar = document.getElementById('timeProgress');
+      bar.style.width = pct + '%';
+      if(left<=0){ clearInterval(state.timerInterval); submitQuiz(); }
+      else if(pct<25) bar.className='progress-bar progress-bar-striped progress-bar-animated bg-danger';
+      else if(pct<50) bar.className='progress-bar progress-bar-striped progress-bar-animated bg-warning';
+      else bar.className='progress-bar progress-bar-striped progress-bar-animated';
+    }
+  }
+
+  // ----- Sidebar tiles -----
+  function buildQuestionTiles(){
+    quizData.questions.forEach((_,i)=>{
+      const d = document.createElement('div');
+      d.className='q-tile'; d.textContent=i+1;
+      d.addEventListener('click', ()=>{
+        if(!state.submitted) updateTime();
+        renderQuestion(i);
+        qListPanel.classList.remove('show'); overlay.classList.remove('show'); document.body.style.overflow='';
+      });
+      qListGrid.appendChild(d);
+    });
+  }
+  function updateTiles(){
+    document.querySelectorAll('.q-tile').forEach((el,idx)=>{
+      el.className='q-tile';
+      if(idx===state.current) el.classList.add('active');
+      if(state.submitted && state.answers[idx]!==null){
+        if(state.answers[idx]===quizData.questions[idx].correctIndex) {
+          el.classList.add('correct');
+        } else {
+          el.classList.add('incorrect');
+        }
+      } else if(state.submitted && state.answers[idx]===null) {
+        el.classList.add('unattempted');
+      }
+    });
+  }
+
+  // ----- Render question -----
+  function renderQuestion(idx){
+    state.current=idx;
+    const q=quizData.questions[idx];
+    let html=`
+      <div class="card question-card">
+        <div class="q-meta">Question ${idx+1} of ${quizData.questions.length}</div>
+        ${q.reference?`<div class="mb-2 small opacity-75">${q.reference}</div>`:''}
+        <div class="q-text">${q.text}</div>
+        <div class="options">`;
+    q.options.forEach((opt,i)=>{
+      let cls='option-btn';
+      if(state.answers[idx]===i) cls+=' selected';
+      if(state.submitted){
+        if(i===q.correctIndex) cls+=' correct';
+        else if(state.answers[idx]===i) cls+=' incorrect';
+      }
+      html += `<button class="${cls}" data-i="${i}">${opt}</button>`;
+    });
+    html += `</div>
+        <div class="explanation" ${state.submitted?'':'style="display:none"'}><strong><i class="fas fa-lightbulb me-2"></i>Explanation</strong><div>${q.explanation||''}</div></div>
+      </div>
+    `;
+    // analysis panel in review
+    if(state.submitted){
+      const t = state.timePerQ[idx], avg = state.avgTime;
+      let badge='chip-avg', label='Average';
+      if(t<avg*0.7){ badge='chip-fast'; label='Fast'; }
+      else if(t>avg*1.3){ badge='chip-slow'; label='Slow'; }
+      const attempted = state.answers[idx]!==null;
+      const correct = attempted && state.answers[idx]===q.correctIndex;
+      html += `
+      <div class="card question-card">
+        <div class="fw-bold mb-2"><i class="fas fa-chart-line me-2"></i>Question Analysis</div>
+        <div class="mb-2">Status: <span class="fw-bold ${correct?'text-success':(attempted?'text-danger':'text-warning')}">
+          ${attempted?(correct?'Correct':'Incorrect'):'Unattempted'}</span></div>
+        <div class="mb-2">Time spent: <span class="fw-bold">${t.toFixed(1)}s</span> <span class="badge-chip ${badge} ms-2">${label}</span></div>
+        <div class="time-bar"><div class="time-fill" style="width:${Math.min(t/avg*100,200)}%"></div></div>
+        <div class="d-flex justify-content-between small mt-1"><span>0s</span><span>${avg.toFixed(1)}s avg</span><span>${(avg*2).toFixed(1)}s+</span></div>
+      </div>`;
+    }
+    qContainer.innerHTML=html;
+
+    document.querySelectorAll('.option-btn').forEach(btn=>{
+      btn.addEventListener('click',()=>{
+        if(state.submitted) return;
+        clickSound.currentTime=0; clickSound.play();
+        const i = parseInt(btn.dataset.i);
+        state.answers[state.current]=i;
+        document.querySelectorAll('.option-btn').forEach(b=>b.classList.remove('selected'));
+        btn.classList.add('selected');
+        updateTiles();
+        if(state.current < quizData.questions.length-1){
+          setTimeout(()=>{ updateTime(); renderQuestion(state.current+1); }, 700);
+        }
+      });
+    });
+
+    updateTiles();
+
+    if(state.inReviewMode && state.lastSoundIdx!==idx){
+      state.lastSoundIdx=idx;
+      const isAttempted = state.answers[idx]!==null;
+      const isCorrect = isAttempted && state.answers[idx]===q.correctIndex;
+      if(isAttempted){
+        setTimeout(()=>{ (isCorrect?correctSound:wrongSound).play(); }, 250);
+      }
+    }
+  }
+
+  function go(dir){
+    const i = state.current + dir;
+    if(i>=0 && i<quizData.questions.length){
+      if(!state.submitted) updateTime();
+      renderQuestion(i);
+    }
+  }
+
+  function updateTime(){
+    const now = new Date();
+    state.timePerQ[state.current] += (now - state.startTime)/1000;
+    state.startTime = now;
+  }
+
+  // ----- Submit & Results -----
+  function submitQuiz(){
+    if(state.submitted) return;
+    clearInterval(state.timerInterval);
+    updateTime();
+    state.submitted=true;
+
+    let correct=0, incorrect=0, unattempted=0, score=0, neg=0;
+    state.answers.forEach((a,i)=>{
+      if(a===null){ unattempted++; }
+      else if(a===quizData.questions[i].correctIndex){ correct++; score+=1; }
+      else { incorrect++; score-=state.negativeMark; neg+=state.negativeMark; }
+    });
+
+    state.avgTime = state.timePerQ.reduce((s,t)=>s+t,0)/quizData.questions.length;
+
+    const pct = (score/quizData.questions.length)*100;
+    document.getElementById('totalQuestions').textContent = quizData.questions.length;
+    document.getElementById('correctAnswers').textContent = correct;
+    document.getElementById('incorrectAnswers').textContent = incorrect;
+    document.getElementById('unattempted').textContent = unattempted;
+    document.getElementById('negativeMarks').textContent = `-${neg.toFixed(2)}`;
+    document.getElementById('scoreDisplay').textContent = `${score.toFixed(2)} / ${quizData.questions.length} (${pct.toFixed(1)}%)`;
+
+    document.getElementById('questionContainer').style.display='none';
+    submitBtn.style.display='none';
+    resultCard.style.display='block';
+
+    buildCharts({correct,incorrect,unattempted});
+    updateTiles(); // Update tiles to show correct/incorrect/unattempted status
+    
+    if(pct>=70){ confetti(); correctSound.play(); }
+    else if(pct<50){ wrongSound.play(); }
+  }
+
+  function buildCharts(res){
+    // donut
+    new Chart(document.getElementById('performanceChart').getContext('2d'),{
+      type:'doughnut',
+      data:{ labels:['Correct','Incorrect','Unattempted'],
+        datasets:[{ data:[res.correct,res.incorrect,res.unattempted],
+          backgroundColor:['#28c76f','#ea5455','#ff9f43'] }]},
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}} }
+    });
+
+    // stacked time bars
+    const labels = Array.from({length:quizData.questions.length},(_,i)=>`Q${i+1}`);
+    const correctTimes=[], incorrectTimes=[], unattemptedTimes=[];
+    state.answers.forEach((a,i)=>{
+      const t = state.timePerQ[i];
+      if(a===null){ unattemptedTimes.push(t); correctTimes.push(0); incorrectTimes.push(0); }
+      else if(a===quizData.questions[i].correctIndex){ correctTimes.push(t); incorrectTimes.push(0); unattemptedTimes.push(0); }
+      else { incorrectTimes.push(t); correctTimes.push(0); unattemptedTimes.push(0); }
+    });
+    new Chart(document.getElementById('timeAnalysisChart').getContext('2d'),{
+      type:'bar',
+      data:{ labels,
+        datasets:[
+          {label:'Correct',data:correctTimes,backgroundColor:'#28c76f',borderColor:'#28c76f',borderWidth:1},
+          {label:'Incorrect',data:incorrectTimes,backgroundColor:'#ea5455',borderColor:'#ea5455',borderWidth:1},
+          {label:'Unattempted',data:unattemptedTimes,backgroundColor:'#ff9f43',borderColor:'#ff9f43',borderWidth:1}
+        ]},
+      options:{ responsive:true, maintainAspectRatio:false,
+        scales:{ x:{stacked:true,title:{display:true,text:'Questions'}},
+                 y:{stacked:true,title:{display:true,text:'Time (s)'}} },
+        plugins:{ tooltip:{ callbacks:{
+          title:(items)=>`Question ${items[0].dataIndex+1}`,
+          label:(ctx)=> ctx.parsed.y>0 ? `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}s` : ''
+        }}}}
+    });
+  }
+
+  function reviewMode(){
+    state.inReviewMode=true; state.lastSoundIdx=-1;
+    document.getElementById('questionContainer').style.display='block';
+    resultCard.style.display='none'; submitBtn.style.display='none';
+    renderQuestion(0);
+  }
+
+  function confetti(){
+    const colors=['#6C63FF','#5A4BFF','#FF6584','#28c76f','#ff9f43','#ea5455'];
+    for(let i=0;i<140;i++){
+      const d=document.createElement('div');
+      d.style.cssText=`position:fixed;width:10px;height:10px;top:-10px;left:${Math.random()*100}vw;background:${colors[Math.floor(Math.random()*colors.length)]};z-index:1300;`;
+      document.body.appendChild(d);
+      const dy = Math.random()*500+500, rot = Math.random()*360;
+      const anim = d.animate([{transform:'translateY(0) rotate(0)',opacity:1},{transform:`translateY(${dy}px) rotate(${rot}deg)`,opacity:0}],
+        {duration:Math.random()*3000+1800, easing:'cubic-bezier(.23,1,.32,1)'});
+      anim.onfinish=()=>d.remove();
+    }
+  }
+})();
+</script>
+</body>
+</html>
