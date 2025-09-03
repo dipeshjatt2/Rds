@@ -27,6 +27,38 @@ user_state = {}
 
 # ─── HELPER FUNCTIONS (PARSING & HTML) ───
 # These functions are from the second bot for the HTML generation feature.
+def parse_format_dash(txt: str):
+    """Q#: ... with dash-prefixed options and Ex: explanation"""
+    questions = []
+    blocks = re.split(r'(?m)^Q\d+:\s*', txt)  # Split on Q1:, Q2:, etc.
+    for block in blocks:
+        if not block.strip():
+            continue
+        lines = [l.strip() for l in block.strip().splitlines() if l.strip()]
+        if not lines:
+            continue
+        qtext = lines[0]  # first line after Q#: is question
+        opts = []
+        correct = -1
+        explanation = ""
+        for i, l in enumerate(lines[1:], start=1):
+            if l.startswith("-"):
+                option_text = l.lstrip("-").strip()
+                has_tick = "✅" in option_text
+                option_text = option_text.replace("✅", "").strip()
+                opts.append(option_text)
+                if has_tick:
+                    correct = len(opts) - 1
+            elif l.lower().startswith("ex:"):
+                explanation = re.sub(r'(?i)^ex:\s*', '', l).strip()
+        questions.append({
+            "text": qtext,
+            "options": opts,
+            "correctIndex": correct,
+            "explanation": explanation,
+            "reference": ""
+        })
+    return questions
 
 def parse_format1(txt: str):
     """Definition style, supports (a)(b)(c)... unlimited"""
@@ -140,6 +172,8 @@ def detect_and_parse(txt:str):
         return parse_format2(txt)
     if re.search(r'✅', txt) and not ("(a)" in txt):
         return parse_format4(txt)
+    if re.search(r'(?m)^Q\d+:\s', txt) and "-" in txt:
+        return parse_format_dash(txt)    
     return []
 
 def replace_questions_in_template(html: str, questions, minutes:int, negative:float):
