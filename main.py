@@ -495,6 +495,63 @@ async def handle_message(client, message: Message):
             del user_state[uid] # End of flow
             return
 
+@app.on_message(filters.command("shufftxt"))
+async def shufftxt_handler(client, message: Message):
+    """Shuffle questions + options from a replied text file and send back."""
+    if not message.reply_to_message or not message.reply_to_message.document:
+        await message.reply_text("⚠️ Please reply to a `.txt` file with /shufftxt to shuffle it.")
+        return
+
+    file_name = message.reply_to_message.document.file_name
+    if not file_name.lower().endswith(".txt"):
+        await message.reply_text("❌ Please reply to a valid `.txt` file.")
+        return
+
+    try:
+        # Download and read file
+        path = await message.reply_to_message.download()
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            txt = f.read()
+        os.remove(path)
+
+        # Parse questions using existing detect_and_parse
+        questions = detect_and_parse(txt)
+        if not questions:
+            await message.reply_text("❌ Could not parse any questions from the file.")
+            return
+
+        # --- Shuffle Logic ---
+        # 1. Reverse question order
+        questions.reverse()
+        # 2. For each question, reverse option order & adjust correctIndex
+        for q in questions:
+            if len(q["options"]) > 1:
+                # Reverse options
+                q["options"].reverse()
+                # Adjust correctIndex after reversal
+                if q["correctIndex"] != -1:
+                    q["correctIndex"] = len(q["options"]) - 1 - q["correctIndex"]
+
+        # Reconstruct text in a simple human-readable format
+        out_lines = []
+        for i, q in enumerate(questions, start=1):
+            out_lines.append(f"{i}. {q['text']}")
+            for idx, opt in enumerate(q["options"]):
+                prefix = chr(97 + idx)  # a, b, c, ...
+                mark = " ✅" if idx == q["correctIndex"] else ""
+                out_lines.append(f"{prefix}) {opt}{mark}")
+            if q["explanation"]:
+                out_lines.append(f"Ex: {q['explanation']}")
+            out_lines.append("")  # Blank line between questions
+
+        final_txt = "\n".join(out_lines).strip()
+        file_obj = io.BytesIO(final_txt.encode("utf-8"))
+        file_obj.name = "shuffled_questions.txt"
+
+        await message.reply_document(file_obj, caption="✅ Shuffled questions generated successfully!")
+    
+    except Exception as e:
+        await message.reply_text(f"❌ Error while processing: {e}")
 
 # ── RUN BOT ──
 if __name__ == "__main__":
