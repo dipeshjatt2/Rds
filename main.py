@@ -27,6 +27,98 @@ user_state = {}
 
 # ─── HELPER FUNCTIONS (PARSING & HTML) ───
 # These functions are from the second bot for the HTML generation feature.
+
+@app.on_message(filters.command("shufftxt"))
+async def shufftxt_handler(client, message: Message):
+    """
+    Usage:
+      - Reply to a .txt or .csv file with the command: /shufftxt
+      - OR send the file with caption "/shufftxt" (so message.document is the same message)
+    Behavior:
+      - Parses the file using your detect_and_parse / parse_csv
+      - Reverses question order (first <-> last)
+      - Reverses options for each question (first option <-> last option) and adjusts correctIndex
+      - Sends back a shuffled .txt file (keeps ✅ marks and Ex: if present)
+    """
+    # find the message that contains the file: either reply_to_message or the current message (if file + caption)
+    target_msg = None
+    if message.reply_to_message and message.reply_to_message.document:
+        target_msg = message.reply_to_message
+    elif message.document:  # user sent the file with caption "/shufftxt"
+        target_msg = message
+    else:
+        await message.reply_text(
+            "⚠️ Please reply to a `.txt` or `.csv` file with /shufftxt, or send the file with caption `/shufftxt`."
+        )
+        return
+
+    doc = target_msg.document
+    fname = (doc.file_name or "file").lower()
+    if not (fname.endswith(".txt") or fname.endswith(".csv")):
+        await message.reply_text("❌ Unsupported file type. Please use a `.txt` or `.csv` file.")
+        return
+
+    try:
+        # download file to temp path
+        path = await target_msg.download()
+        # parse according to file type
+        if fname.endswith(".csv"):
+            questions = parse_csv(path)
+        else:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                txt = f.read()
+            questions = detect_and_parse(txt)
+        # cleanup downloaded file
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+
+        if not questions:
+            await message.reply_text(
+                "❌ Could not parse any questions from the file. Make sure the format is supported (see /htmk)."
+            )
+            return
+
+        # Shuffle logic: reverse questions order; for each question reverse options & fix correctIndex
+        questions.reverse()
+        for q in questions:
+            opts = q.get("options", [])
+            ci = q.get("correctIndex", -1)
+            if len(opts) > 1:
+                # reverse options in-place
+                opts.reverse()
+                # adjust correct index after reversal
+                if ci is not None and ci != -1:
+                    q["correctIndex"] = len(opts) - 1 - ci
+                else:
+                    q["correctIndex"] = -1
+
+        # Reconstruct a human-readable .txt (numbered + a) b) style)
+        out_lines = []
+        for i, q in enumerate(questions, start=1):
+            qtext = q.get("text", "").replace("\r", "")
+            out_lines.append(f"{i}. {qtext}")
+            for idx, opt in enumerate(q.get("options", [])):
+                prefix = f"{chr(97 + idx)})"  # a), b), ...
+                mark = " ✅" if idx == q.get("correctIndex", -1) else ""
+                out_lines.append(f"{prefix} {opt}{mark}")
+            if q.get("explanation"):
+                out_lines.append(f"Ex: {q.get('explanation')}")
+            out_lines.append("")  # blank line between questions
+
+        final_txt = "\n".join(out_lines).strip()
+        file_obj = io.BytesIO(final_txt.encode("utf-8"))
+        base = os.path.splitext(os.path.basename(fname))[0]
+        file_obj.name = f"shuffled_{base}.txt"
+
+        await message.reply_document(file_obj, caption="✅ Shuffled questions generated successfully!")
+    except Exception as e:
+        # send short error so you can see what went wrong; for large tracebacks add logging to console
+        await message.reply_text(f"❌ Error while processing the file: {e}")
+
+
+#
 def parse_format_dash(txt: str):
     """Q#: ... with dash-prefixed options and Ex: explanation"""
     questions = []
@@ -495,91 +587,6 @@ async def handle_message(client, message: Message):
             del user_state[uid] # End of flow
             return
 #end
-@app.on_message(filters.command("shufftxt"))
-async def shufftxt_handler(client, message: Message):
-    """
-    Shuffles questions and their options from a replied-to .txt file.
-    """
-    # 1. Check if the command is a reply to a document
-    if not message.reply_to_message or not message.reply_to_message.document:
-        await message.reply_text("⚠️ **Usage:** Please reply to a `.txt` quiz file with the `/shufftxt` command.")
-        return
-
-    doc = message.reply_to_message.document
-    
-    # 2. Validate file type
-    if not doc.file_name or not doc.file_name.lower().endswith(".txt"):
-        await message.reply_text("❌ **Invalid File:** This command only works with `.txt` files.")
-        return
-
-    # 3. Download and parse the file
-    try:
-        await message.reply_text(" shuffling your file...", quote=True)
-        path = await message.reply_to_message.download()
-        
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            txt = f.read()
-        
-        questions = detect_and_parse(txt)
-        os.remove(path) # Clean up the downloaded file
-
-        if not questions:
-            await message.edit_text("❌ **Parsing Failed:** Could not find any valid questions in the file. Please check the format.")
-            return
-
-    except Exception as e:
-        await message.edit_text(f"❌ **An error occurred:** {e}")
-        return
-
-    # 4. Perform the shuffling logic
-    # Shuffle the order of the questions
-    random.shuffle(questions)
-
-    # For each question, shuffle the order of its options
-    for q in questions:
-        if len(q.get("options", [])) > 1 and q.get("correctIndex") is not None:
-            # Save the correct answer text before shuffling
-            correct_opt_text = q["options"][q["correctIndex"]]
-            
-            # Shuffle the options list
-            random.shuffle(q["options"])
-            
-            # Find the new index of the correct answer and update it
-            q["correctIndex"] = q["options"].index(correct_opt_text)
-
-    # 5. Reconstruct the shuffled text
-    output_lines = []
-    option_labels = [f"{chr(97+i)})" for i in range(26)] # a), b), c)...
-
-    for i, q in enumerate(questions, 1):
-        output_lines.append(f"{i}. {q['text']}") # Question text
-        
-        for j, opt in enumerate(q['options']):
-            label = option_labels[j] if j < len(option_labels) else f"{j+1}."
-            is_correct = " ✅" if j == q['correctIndex'] else ""
-            output_lines.append(f"{label} {opt}{is_correct}")
-        
-        if q.get('explanation'):
-            output_lines.append(f"Ex: {q['explanation']}")
-            
-        output_lines.append("") # Add a blank line for readability
-
-    final_text = "\n".join(output_lines)
-
-    # 6. Send the result back as a new .txt file
-    try:
-        shuffled_file = io.BytesIO(final_text.encode('utf-8'))
-        shuffled_file.name = f"shuffled_{doc.file_name}"
-        
-        await message.reply_document(
-            document=shuffled_file,
-            caption="✅ Here is your shuffled quiz file!"
-        )
-        await message.delete() # Delete the " shuffling..." message
-    except Exception as e:
-        await message.edit_text(f"❌ **Error sending file:** {e}")
-
-
 
 # ── RUN BOT ──
 if __name__ == "__main__":
