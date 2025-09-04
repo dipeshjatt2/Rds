@@ -471,7 +471,6 @@ async def document_handler(client, message: Message):
 
 
 # ── 4. Main State Machine for Text Messages ──
-# ── 5. Poll ured by the bot owner.")
 # ── 5. Poll Scraper (/poll2txt) ──
 import re # Make sure this is at the top of your file
 
@@ -480,7 +479,7 @@ MAX_POLLS = 50 # Set the maximum number of polls to fetch
 async def run_scraper(main_bot_client: Client, user_message: Message, replied_message: Message):
     """
     This helper function manages the entire userbot scraping process,
-    now updated to handle deep link start buttons.
+    now updated with active poll answering to capture correct answers.
     """
     user_id = user_message.from_user.id
     chat_id = user_message.chat.id
@@ -500,8 +499,6 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
             raise ValueError("Replied message has no buttons.")
         
         button_url = replied_message.reply_markup.inline_keyboard[0][0].url
-        
-        # Use regex to extract bot username and start token
         match = re.search(r"t\.me/([^?]+)\?start=(.+)", button_url)
         if not match:
             raise ValueError("The button does not contain a valid QuizBot start link.")
@@ -510,19 +507,49 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
         start_token = match.group(2)
         await status_msg.edit(f"✅ **Link identified!**\n\nBot: `@{bot_username}`\nAction: Starting quiz...")
 
-        # Initialize the userbot client in memory
         userbot = Client("userbot_session_" + str(user_id), session_string=SESSION_STRING, api_id=API_ID, api_hash=API_HASH, in_memory=True)
 
         @userbot.on_message(filters.poll & filters.private)
         async def poll_handler(_, poll_message: Message):
-            """This handler runs on the userbot and catches incoming polls from the target bot."""
+            """
+            This handler now actively votes on polls to determine the correct answer
+            before capturing the data.
+            """
             # Ensure the poll is from the correct bot we are interacting with
-            if poll_message.from_user.username.lower() != bot_username.lower():
+            if not poll_message.from_user or poll_message.from_user.username.lower() != bot_username.lower():
                 return
 
-            poll = poll_message.poll
-            correct_index = poll.correct_option_id if poll.correct_option_id is not None else 0
+            # --- NEW LOGIC TO ACTIVELY ANSWER POLLS ---
+            correct_index = 0 # Default to 0 as a fallback
+            try:
+                # 1. Vote on the poll with the first option to trigger the result
+                await userbot.vote_poll(
+                    chat_id=poll_message.chat.id,
+                    message_id=poll_message.id,
+                    options=[0]
+                )
+                
+                # 2. Wait a moment for Telegram to process the vote and update the poll
+                await asyncio.sleep(2)
+                
+                # 3. Re-fetch the message to get the updated poll object
+                updated_message = await userbot.get_messages(
+                    chat_id=poll_message.chat.id,
+                    message_id=poll_message.id
+                )
+                
+                # 4. Reliably get the correct_option_id from the updated poll
+                if updated_message and updated_message.poll:
+                    correct_index = updated_message.poll.correct_option_id
+                    if correct_index is None: # Fallback if still not available
+                        correct_index = 0
+            except Exception:
+                # If voting or fetching fails, we'll just use the fallback index
+                correct_index = 0
+            # --- END OF NEW LOGIC ---
 
+            # Use the original poll object for text content, but the new correct_index
+            poll = poll_message.poll
             data = {
                 "text": poll.question,
                 "options": [opt.text for opt in poll.options],
@@ -533,7 +560,7 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
             
             # Update progress
             try:
-                await status_msg.edit(f"📥 **Scraping in progress...**\n\nCollected **{len(scraped_data['polls'])}/{MAX_POLLS}** polls.")
+                await status_msg.edit(f"📥 **Scraping in progress...**\n\nAnswered and collected **{len(scraped_data['polls'])}/{MAX_POLLS}** polls.")
             except: # Ignore errors if message is same
                 pass
 
@@ -554,7 +581,7 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
         async for msg in userbot.get_chat_history(bot_username, limit=5):
             if msg.reply_markup and msg.reply_markup.inline_keyboard:
                 await msg.click(0) # Click the first button found
-                await status_msg.edit("👍 Clicked **I am ready** button. Now receiving polls...")
+                await status_msg.edit("👍 Clicked **I am ready** button. Now answering and capturing polls...")
                 clicked_ready = True
                 break
         
@@ -632,6 +659,7 @@ async def poll2txt_handler(client, message: Message):
 
     user_sessions[user_id] = True 
     asyncio.create_task(run_scraper(client, message, message.reply_to_message))
+
 
 
 
