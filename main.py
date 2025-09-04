@@ -471,10 +471,12 @@ async def document_handler(client, message: Message):
 
 
 # ── 4. Main State Machine for Text Messages ──
-# 
-import re  # Make sure this is at the top of your file
+# ── 5. Poll Scraper (/poll2txt) ──
 
-MAX_POLLS = 100  # Set the maximum number of polls to fetch
+
+import re # Make sure this is at the top of your file
+
+MAX_POLLS = 100 # Set the maximum number of polls to fetch
 
 async def run_scraper(main_bot_client: Client, user_message: Message, replied_message: Message):
     """
@@ -488,7 +490,7 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
     scraped_data = {"polls": [], "stop_reason": ""}
     scraping_finished = asyncio.Event()
 
-    userbot = None  # Define userbot here to access it in finally block
+    userbot = None # Define userbot here to access it in finally block
     try:
         if not SESSION_STRING:
             await status_msg.edit("❌ **Error:** `SESSION_STRING` is not configured by the bot owner.")
@@ -520,7 +522,7 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
                 return
 
             # --- NEW LOGIC TO ACTIVELY ANSWER POLLS ---
-            correct_index = 0  # Default to 0 as a fallback
+            correct_index = 0 # Default to 0 as a fallback
             try:
                 # 1. Vote on the poll with the first option to trigger the result
                 await userbot.vote_poll(
@@ -541,7 +543,7 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
                 # 4. Reliably get the correct_option_id from the updated poll
                 if updated_message and updated_message.poll:
                     correct_index = updated_message.poll.correct_option_id
-                    if correct_index is None:  # Fallback if still not available
+                    if correct_index is None: # Fallback if still not available
                         correct_index = 0
             except Exception:
                 # If voting or fetching fails, we'll just use the fallback index
@@ -561,7 +563,7 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
             # Update progress
             try:
                 await status_msg.edit(f"📥 **Scraping in progress...**\n\nAnswered and collected **{len(scraped_data['polls'])}/{MAX_POLLS}** polls.")
-            except:  # Ignore errors if message is same
+            except: # Ignore errors if message is same
                 pass
 
             if len(scraped_data["polls"]) >= MAX_POLLS:
@@ -576,30 +578,17 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
         await status_msg.edit("▶️ Sent `/start` command to QuizBot. Waiting for a response...")
         await asyncio.sleep(3)
 
-        # 3. Find the "I am ready" or "Try again" message and click the appropriate button
-        clicked_button = False
-        button_text = ""
-        async for msg in userbot.get_chat_history(bot_username, limit=10):
+        # 3. Find the "I am ready" message and click it
+        clicked_ready = False
+        async for msg in userbot.get_chat_history(bot_username, limit=5):
             if msg.reply_markup and msg.reply_markup.inline_keyboard:
-                for row in msg.reply_markup.inline_keyboard:
-                    for button in row:
-                        if button.text.lower() in ["i am ready", "try again"]:
-                            # Click the button by finding its position
-                            row_idx = msg.reply_markup.inline_keyboard.index(row)
-                            col_idx = row.index(button)
-                            await msg.click(row_idx, col_idx)
-                            button_text = button.text
-                            clicked_button = True
-                            break
-                    if clicked_button:
-                        break
-                if clicked_button:
-                    break
+                await msg.click(0) # Click the first button found
+                await status_msg.edit("👍 Clicked **I am ready** button. Now answering and capturing polls...")
+                clicked_ready = True
+                break
         
-        if not clicked_button:
-            raise ValueError("Could not find the 'I am ready' or 'Try again' button after starting the quiz.")
-
-        await status_msg.edit(f"👍 Clicked **{button_text}** button. Now answering and capturing polls...")
+        if not clicked_ready:
+            raise ValueError("Could not find the 'I am ready' button after starting the quiz.")
 
         # 4. Wait for polls to arrive (with a timeout)
         try:
@@ -627,11 +616,14 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
         lines = []
         for idx, q in enumerate(scraped_data["polls"], start=1):
             lines.append(f"{idx}. {q['text']}")
-            for i, opt in enumerate(q['options']):
-                mark = " ✅" if i == q['correctIndex'] else ""
-                lines.append(f"({chr(97 + i)}) {opt}{mark}")
+            options_text = [f"  ({chr(97 + i)}) {opt}" for i, opt in enumerate(q['options'])]
+            lines.extend(options_text)
+            
+            if q['correctIndex'] is not None and q['correctIndex'] < len(q['options']):
+                correct_char = chr(97 + q['correctIndex'])
+                lines.append(f"  Correct: ({correct_char})")
             if q['explanation']:
-                lines.append(f"Ex: {q['explanation']}")
+                lines.append(f"  Ex: {q['explanation']}")
             lines.append("")
 
         content = "\n".join(lines)
@@ -669,7 +661,6 @@ async def poll2txt_handler(client, message: Message):
 
     user_sessions[user_id] = True 
     asyncio.create_task(run_scraper(client, message, message.reply_to_message))
-
 
 @app.on_message(filters.text & ~filters.command(["start", "help", "create", "txqz", "htmk"]))
 async def handle_message(client, message: Message):
