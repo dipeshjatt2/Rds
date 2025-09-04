@@ -15,6 +15,7 @@ from pyrogram.enums import ParseMode, PollType
 API_ID = 22118129
 API_HASH = "43c66e3314921552d9330a4b05b18800"
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
+SESSION_STRING = os.environ.get("SESSION_STRING") 
 
 # This HTML template file must be in the same directory as the bot script.
 TEMPLATE_HTML = "format2.html"
@@ -24,7 +25,7 @@ app = Client("combined_quiz_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BO
 # ── GLOBAL STATE & CONSTANTS ──
 # Unified state management for all bot functions.
 user_state = {}
-
+user_sessions = {} # Tracks active /poll2txt scraping sessions
 # ─── HELPER FUNCTIONS (PARSING & HTML) ───
 # These functions are from the second bot for the HTML generation feature.
 
@@ -116,6 +117,7 @@ async def shufftxt_handler(client, message: Message):
     except Exception as e:
         # send short error so you can see what went wrong; for large tracebacks add logging to console
         await message.reply_text(f"❌ Error while processing the file: {e}")
+
 
 
 #
@@ -469,6 +471,176 @@ async def document_handler(client, message: Message):
 
 
 # ── 4. Main State Machine for Text Messages ──
+# ── 5. Poll Scraper (/poll2txt) ──
+
+MAX_POLLS = 50 # Set the maximum number of polls to fetch
+
+async def run_scraper(main_bot_client: Client, user_message: Message, replied_message: Message):
+    """
+    This helper function manages the entire userbot scraping process for a single user.
+    """
+    user_id = user_message.from_user.id
+    chat_id = user_message.chat.id
+    status_msg = await main_bot_client.send_message(chat_id, "🚀 **Starting scraper...**\n\nInitializing user session. Please wait.")
+
+    # A dictionary to hold this specific user's scraped data
+    scraped_data = {"polls": [], "stop_reason": ""}
+    
+    # An asyncio.Event to signal when to stop listening for polls
+    scraping_finished = asyncio.Event()
+
+    try:
+        if not SESSION_STRING:
+            await status_msg.edit("❌ **Error:** `SESSION_STRING` is not configured by the bot owner.")
+            return
+
+        # Initialize the userbot client in memory
+        userbot = Client("userbot_session_" + str(user_id), session_string=SESSION_STRING, api_id=API_ID, api_hash=API_HASH, in_memory=True)
+
+        @userbot.on_message(filters.poll)
+        async def poll_handler(_, poll_message: Message):
+            """This handler runs on the userbot and catches incoming polls."""
+            # Ensure the poll is from the target bot chat
+            if poll_message.chat.id != (await userbot.get_me()).id:
+                 return # Ignore polls from other chats
+
+            poll = poll_message.poll
+            
+            # Vote on the poll to reveal the answer
+            try:
+                # Use vote_poll on the original poll message ID, not the forwarded one.
+                # This requires getting the correct message ID after clicking buttons.
+                # A simpler, more reliable way is to just grab the answer if available.
+                correct_index = poll.correct_option_id
+            except Exception:
+                correct_index = 0 # Fallback if voting fails or it's not a quiz
+
+            data = {
+                "text": poll.question,
+                "options": [opt.text for opt in poll.options],
+                "correctIndex": correct_index,
+                "explanation": getattr(poll, "explanation", "") or ""
+            }
+            scraped_data["polls"].append(data)
+            
+            # Update progress
+            await status_msg.edit(f"📥 **Scraping in progress...**\n\nCollected **{len(scraped_data['polls'])}/{MAX_POLLS}** polls.")
+
+            if len(scraped_data["polls"]) >= MAX_POLLS:
+                scraped_data["stop_reason"] = f"Reached max limit of {MAX_POLLS} polls."
+                scraping_finished.set() # Signal that we are done
+
+        # Start the userbot client
+        await userbot.start()
+        user_info = await userbot.get_me()
+        await status_msg.edit("✅ **Session Active!**\n\nForwarding message and clicking buttons...")
+        
+        # 1. Forward the message with the button to the userbot's "Saved Messages"
+        fw_msg = await main_bot_client.forward_messages(
+            chat_id=user_info.id,
+            from_chat_id=replied_message.chat.id,
+            message_ids=replied_message.id
+        )
+        await asyncio.sleep(2)
+
+        # 2. Click the "Start Quiz" button (or similar)
+        # We assume the first button is the correct one.
+        if fw_msg.reply_markup and fw_msg.reply_markup.inline_keyboard:
+            await fw_msg.click(0)
+            await status_msg.edit("▶️ Clicked **Start Quiz** button...")
+            await asyncio.sleep(3)
+        else:
+            raise ValueError("Replied message has no buttons.")
+
+        # 3. Find the "I am ready" message and click it
+        clicked_ready = False
+        async for msg in userbot.get_chat_history(user_info.id, limit=5):
+            if msg.reply_markup and msg.reply_markup.inline_keyboard:
+                # Assuming the "I am ready" button is the first one again
+                await msg.click(0)
+                await status_msg.edit("👍 Clicked **I am ready** button. Now receiving polls...")
+                clicked_ready = True
+                break
+        
+        if not clicked_ready:
+            raise ValueError("Could not find the 'I am ready' button.")
+
+        # 4. Wait for polls to arrive (with a timeout)
+        try:
+            # Wait for the event to be set, with a 2-minute timeout
+            await asyncio.wait_for(scraping_finished.wait(), timeout=120) 
+        except asyncio.TimeoutError:
+            scraped_data["stop_reason"] = "Timeout: No new polls received for 2 minutes."
+
+    except Exception as e:
+        await status_msg.edit(f"❌ **An error occurred:**\n`{str(e)}`")
+        return
+    finally:
+        # Stop the userbot and clean up
+        if 'userbot' in locals() and userbot.is_connected:
+            await userbot.stop()
+        if user_id in user_sessions:
+            del user_sessions[user_id]
+        await status_msg.edit(f"🛑 **Scraping Finished!**\n\nReason: {scraped_data['stop_reason']}\nTotal polls collected: {len(scraped_data['polls'])}\n\nNow formatting the data...")
+
+    # --- Format and Send Data ---
+    if not scraped_data["polls"]:
+        await status_msg.edit("🤷 No polls were collected. Nothing to send.")
+        return
+
+    try:
+        lines = []
+        for idx, q in enumerate(scraped_data["polls"], start=1):
+            lines.append(f"{idx}. {q['text']}")
+            options_text = [f"  ({chr(97 + i)}) {opt}" for i, opt in enumerate(q['options'])]
+            lines.extend(options_text)
+            
+            # Add correct answer and explanation
+            correct_char = chr(97 + q['correctIndex'])
+            lines.append(f"  Correct: ({correct_char})")
+            if q['explanation']:
+                lines.append(f"  Ex: {q['explanation']}")
+            lines.append("") # Blank line for separation
+
+        content = "\n".join(lines)
+        output_file = f"quiz_data_{user_id}.txt"
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        await status_msg.delete()
+        await main_bot_client.send_document(
+            chat_id=chat_id,
+            document=output_file,
+            caption="🎉 **Here is your formatted quiz data!**"
+        )
+        os.remove(output_file) # Clean up the file
+
+    except Exception as e:
+        await main_bot_client.send_message(chat_id, f"❌ Failed to format and send the file.\nError: {e}")
+
+
+@app.on_message(filters.command("poll2txt"))
+async def poll2txt_handler(client, message: Message):
+    """
+    Initiates the poll scraping process.
+    Usage: Reply to a quiz bot's 'Start' message with /poll2txt
+    """
+    user_id = message.from_user.id
+
+    if not message.reply_to_message:
+        await message.reply_text("⚠️ **Usage:** Please reply to a message that contains a 'Start Quiz' button with the command `/poll2txt`.")
+        return
+
+    if user_id in user_sessions:
+        await message.reply_text("⏳ You already have an active scraping session. Please wait for it to complete.")
+        return
+
+    # Add user to sessions to prevent multiple simultaneous runs
+    user_sessions[user_id] = True 
+    
+    # Offload the heavy work to the helper function so the main bot remains responsive
+    asyncio.create_task(run_scraper(client, message, message.reply_to_message))
+
 
 @app.on_message(filters.text & ~filters.command(["start", "help", "create", "txqz", "htmk"]))
 async def handle_message(client, message: Message):
