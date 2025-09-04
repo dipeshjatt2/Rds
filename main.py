@@ -471,49 +471,57 @@ async def document_handler(client, message: Message):
 
 
 # ── 4. Main State Machine for Text Messages ──
+# ── 5. Poll ured by the bot owner.")
 # ── 5. Poll Scraper (/poll2txt) ──
+import re # Make sure this is at the top of your file
 
 MAX_POLLS = 50 # Set the maximum number of polls to fetch
 
 async def run_scraper(main_bot_client: Client, user_message: Message, replied_message: Message):
     """
-    This helper function manages the entire userbot scraping process for a single user.
+    This helper function manages the entire userbot scraping process,
+    now updated to handle deep link start buttons.
     """
     user_id = user_message.from_user.id
     chat_id = user_message.chat.id
-    status_msg = await main_bot_client.send_message(chat_id, "🚀 **Starting scraper...**\n\nInitializing user session. Please wait.")
+    status_msg = await main_bot_client.send_message(chat_id, "🚀 **Starting scraper...**\n\nInitializing user session.")
 
-    # A dictionary to hold this specific user's scraped data
     scraped_data = {"polls": [], "stop_reason": ""}
-    
-    # An asyncio.Event to signal when to stop listening for polls
     scraping_finished = asyncio.Event()
 
+    userbot = None # Define userbot here to access it in finally block
     try:
         if not SESSION_STRING:
             await status_msg.edit("❌ **Error:** `SESSION_STRING` is not configured by the bot owner.")
             return
 
+        # 1. Extract deep link URL from the button
+        if not (replied_message.reply_markup and replied_message.reply_markup.inline_keyboard):
+            raise ValueError("Replied message has no buttons.")
+        
+        button_url = replied_message.reply_markup.inline_keyboard[0][0].url
+        
+        # Use regex to extract bot username and start token
+        match = re.search(r"t\.me/([^?]+)\?start=(.+)", button_url)
+        if not match:
+            raise ValueError("The button does not contain a valid QuizBot start link.")
+            
+        bot_username = match.group(1)
+        start_token = match.group(2)
+        await status_msg.edit(f"✅ **Link identified!**\n\nBot: `@{bot_username}`\nAction: Starting quiz...")
+
         # Initialize the userbot client in memory
         userbot = Client("userbot_session_" + str(user_id), session_string=SESSION_STRING, api_id=API_ID, api_hash=API_HASH, in_memory=True)
 
-        @userbot.on_message(filters.poll)
+        @userbot.on_message(filters.poll & filters.private)
         async def poll_handler(_, poll_message: Message):
-            """This handler runs on the userbot and catches incoming polls."""
-            # Ensure the poll is from the target bot chat
-            if poll_message.chat.id != (await userbot.get_me()).id:
-                 return # Ignore polls from other chats
+            """This handler runs on the userbot and catches incoming polls from the target bot."""
+            # Ensure the poll is from the correct bot we are interacting with
+            if poll_message.from_user.username.lower() != bot_username.lower():
+                return
 
             poll = poll_message.poll
-            
-            # Vote on the poll to reveal the answer
-            try:
-                # Use vote_poll on the original poll message ID, not the forwarded one.
-                # This requires getting the correct message ID after clicking buttons.
-                # A simpler, more reliable way is to just grab the answer if available.
-                correct_index = poll.correct_option_id
-            except Exception:
-                correct_index = 0 # Fallback if voting fails or it's not a quiz
+            correct_index = poll.correct_option_id if poll.correct_option_id is not None else 0
 
             data = {
                 "text": poll.question,
@@ -524,50 +532,37 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
             scraped_data["polls"].append(data)
             
             # Update progress
-            await status_msg.edit(f"📥 **Scraping in progress...**\n\nCollected **{len(scraped_data['polls'])}/{MAX_POLLS}** polls.")
+            try:
+                await status_msg.edit(f"📥 **Scraping in progress...**\n\nCollected **{len(scraped_data['polls'])}/{MAX_POLLS}** polls.")
+            except: # Ignore errors if message is same
+                pass
 
             if len(scraped_data["polls"]) >= MAX_POLLS:
                 scraped_data["stop_reason"] = f"Reached max limit of {MAX_POLLS} polls."
-                scraping_finished.set() # Signal that we are done
+                scraping_finished.set()
 
         # Start the userbot client
         await userbot.start()
-        user_info = await userbot.get_me()
-        await status_msg.edit("✅ **Session Active!**\n\nForwarding message and clicking buttons...")
         
-        # 1. Forward the message with the button to the userbot's "Saved Messages"
-        fw_msg = await main_bot_client.forward_messages(
-            chat_id=user_info.id,
-            from_chat_id=replied_message.chat.id,
-            message_ids=replied_message.id
-        )
-        await asyncio.sleep(2)
-
-        # 2. Click the "Start Quiz" button (or similar)
-        # We assume the first button is the correct one.
-        if fw_msg.reply_markup and fw_msg.reply_markup.inline_keyboard:
-            await fw_msg.click(0)
-            await status_msg.edit("▶️ Clicked **Start Quiz** button...")
-            await asyncio.sleep(3)
-        else:
-            raise ValueError("Replied message has no buttons.")
+        # 2. Send the /start command to the QuizBot
+        await userbot.send_message(bot_username, f"/start {start_token}")
+        await status_msg.edit("▶️ Sent `/start` command to QuizBot. Waiting for a response...")
+        await asyncio.sleep(3)
 
         # 3. Find the "I am ready" message and click it
         clicked_ready = False
-        async for msg in userbot.get_chat_history(user_info.id, limit=5):
+        async for msg in userbot.get_chat_history(bot_username, limit=5):
             if msg.reply_markup and msg.reply_markup.inline_keyboard:
-                # Assuming the "I am ready" button is the first one again
-                await msg.click(0)
+                await msg.click(0) # Click the first button found
                 await status_msg.edit("👍 Clicked **I am ready** button. Now receiving polls...")
                 clicked_ready = True
                 break
         
         if not clicked_ready:
-            raise ValueError("Could not find the 'I am ready' button.")
+            raise ValueError("Could not find the 'I am ready' button after starting the quiz.")
 
         # 4. Wait for polls to arrive (with a timeout)
         try:
-            # Wait for the event to be set, with a 2-minute timeout
             await asyncio.wait_for(scraping_finished.wait(), timeout=120) 
         except asyncio.TimeoutError:
             scraped_data["stop_reason"] = "Timeout: No new polls received for 2 minutes."
@@ -577,11 +572,11 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
         return
     finally:
         # Stop the userbot and clean up
-        if 'userbot' in locals() and userbot.is_connected:
+        if userbot and userbot.is_connected:
             await userbot.stop()
         if user_id in user_sessions:
             del user_sessions[user_id]
-        await status_msg.edit(f"🛑 **Scraping Finished!**\n\nReason: {scraped_data['stop_reason']}\nTotal polls collected: {len(scraped_data['polls'])}\n\nNow formatting the data...")
+        await status_msg.edit(f"🛑 **Scraping Finished!**\n\nReason: {scraped_data.get('stop_reason', 'N/A')}\nTotal polls collected: {len(scraped_data['polls'])}\n\nFormatting data...")
 
     # --- Format and Send Data ---
     if not scraped_data["polls"]:
@@ -595,12 +590,12 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
             options_text = [f"  ({chr(97 + i)}) {opt}" for i, opt in enumerate(q['options'])]
             lines.extend(options_text)
             
-            # Add correct answer and explanation
-            correct_char = chr(97 + q['correctIndex'])
-            lines.append(f"  Correct: ({correct_char})")
+            if q['correctIndex'] is not None and q['correctIndex'] < len(q['options']):
+                correct_char = chr(97 + q['correctIndex'])
+                lines.append(f"  Correct: ({correct_char})")
             if q['explanation']:
                 lines.append(f"  Ex: {q['explanation']}")
-            lines.append("") # Blank line for separation
+            lines.append("")
 
         content = "\n".join(lines)
         output_file = f"quiz_data_{user_id}.txt"
@@ -613,7 +608,7 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
             document=output_file,
             caption="🎉 **Here is your formatted quiz data!**"
         )
-        os.remove(output_file) # Clean up the file
+        os.remove(output_file)
 
     except Exception as e:
         await main_bot_client.send_message(chat_id, f"❌ Failed to format and send the file.\nError: {e}")
@@ -635,11 +630,9 @@ async def poll2txt_handler(client, message: Message):
         await message.reply_text("⏳ You already have an active scraping session. Please wait for it to complete.")
         return
 
-    # Add user to sessions to prevent multiple simultaneous runs
     user_sessions[user_id] = True 
-    
-    # Offload the heavy work to the helper function so the main bot remains responsive
     asyncio.create_task(run_scraper(client, message, message.reply_to_message))
+
 
 
 @app.on_message(filters.text & ~filters.command(["start", "help", "create", "txqz", "htmk"]))
