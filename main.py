@@ -117,7 +117,7 @@ async def shufftxt_handler(client, message: Message):
             qtext = q.get("text", "").replace("\r", "")
             out_lines.append(f"{i}. {qtext}")
             for idx, opt in enumerate(q.get("options", [])):
-                prefix = f"{chr(97 + idx)})"
+                prefix = f"({chr(97 + idx)})"
                 mark = " ✅" if idx == q.get("correctIndex", -1) else ""
                 out_lines.append(f"{prefix} {opt}{mark}")
             # This part now works correctly because the explanation is in the right place
