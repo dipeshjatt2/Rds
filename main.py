@@ -28,7 +28,7 @@ user_state = {}
 user_sessions = {} # Tracks active /poll2txt scraping sessions
 # ─── HELPER FUNCTIONS (PARSING & HTML) ───
 # These functions are from the second bot for the HTML generation feature.
-
+# shuffling txt logic       
 @app.on_message(filters.command("shufftxt"))
 async def shufftxt_handler(client, message: Message):
     """
@@ -37,15 +37,15 @@ async def shufftxt_handler(client, message: Message):
       - OR send the file with caption "/shufftxt" (so message.document is the same message)
     Behavior:
       - Parses the file using your detect_and_parse / parse_csv
-      - Reverses question order (first <-> last)
+      - Randomly shuffles the question order
       - Reverses options for each question (first option <-> last option) and adjusts correctIndex
       - Sends back a shuffled .txt file (keeps ✅ marks and Ex: if present)
     """
-    # find the message that contains the file: either reply_to_message or the current message (if file + caption)
+    # Find the message that contains the file
     target_msg = None
     if message.reply_to_message and message.reply_to_message.document:
         target_msg = message.reply_to_message
-    elif message.document:  # user sent the file with caption "/shufftxt"
+    elif message.document:
         target_msg = message
     else:
         await message.reply_text(
@@ -60,16 +60,18 @@ async def shufftxt_handler(client, message: Message):
         return
 
     try:
-        # download file to temp path
+        # Download the file to a temporary path
         path = await target_msg.download()
-        # parse according to file type
+
+        # Parse the file based on its type
         if fname.endswith(".csv"):
             questions = parse_csv(path)
         else:
             with open(path, "r", encoding="utf-8", errors="ignore") as f:
                 txt = f.read()
             questions = detect_and_parse(txt)
-        # cleanup downloaded file
+        
+        # Clean up the downloaded file
         try:
             os.remove(path)
         except Exception:
@@ -81,21 +83,24 @@ async def shufftxt_handler(client, message: Message):
             )
             return
 
-        # Shuffle logic: reverse questions order; for each question reverse options & fix correctIndex
-        questions.reverse()
+        # --- SHUFFLE LOGIC ---
+        # 1. Randomly shuffle the order of questions
+        random.shuffle(questions)
+
+        # 2. For each question, reverse its options and fix the correct index
         for q in questions:
             opts = q.get("options", [])
             ci = q.get("correctIndex", -1)
             if len(opts) > 1:
-                # reverse options in-place
+                # Reverse options in-place
                 opts.reverse()
-                # adjust correct index after reversal
+                # Adjust correct index after reversal
                 if ci is not None and ci != -1:
                     q["correctIndex"] = len(opts) - 1 - ci
                 else:
                     q["correctIndex"] = -1
 
-        # Reconstruct a human-readable .txt (numbered + a) b) style)
+        # --- RECONSTRUCT THE OUTPUT FILE ---
         out_lines = []
         for i, q in enumerate(questions, start=1):
             qtext = q.get("text", "").replace("\r", "")
@@ -106,21 +111,22 @@ async def shufftxt_handler(client, message: Message):
                 out_lines.append(f"{prefix} {opt}{mark}")
             if q.get("explanation"):
                 out_lines.append(f"Ex: {q.get('explanation')}")
-            out_lines.append("")  # blank line between questions
+            out_lines.append("")  # Blank line between questions
 
+        # --- SEND THE RESULT ---
         final_txt = "\n".join(out_lines).strip()
         file_obj = io.BytesIO(final_txt.encode("utf-8"))
         base = os.path.splitext(os.path.basename(fname))[0]
         file_obj.name = f"shuffled_{base}.txt"
 
         await message.reply_document(file_obj, caption="✅ Shuffled questions generated successfully!")
+
     except Exception as e:
-        # send short error so you can see what went wrong; for large tracebacks add logging to console
-        await message.reply_text(f"❌ Error while processing the file: {e}")
+        # Send a brief error message for debugging
+        await message.reply_text(f"❌ An error occurred while processing the file: {e}")
+            
+#dg
 
-
-
-#
 def parse_format_dash(txt: str):
     """Q#: ... with dash-prefixed options and Ex: explanation"""
     questions = []
