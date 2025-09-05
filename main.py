@@ -60,10 +60,8 @@ async def shufftxt_handler(client, message: Message):
         return
 
     try:
-        # Download the file to a temporary path
+        # Download and parse the file
         path = await target_msg.download()
-
-        # Parse the file based on its type
         if fname.endswith(".csv"):
             questions = parse_csv(path)
         else:
@@ -71,7 +69,6 @@ async def shufftxt_handler(client, message: Message):
                 txt = f.read()
             questions = detect_and_parse(txt)
         
-        # Clean up the downloaded file
         try:
             os.remove(path)
         except Exception:
@@ -83,18 +80,32 @@ async def shufftxt_handler(client, message: Message):
             )
             return
 
-        # --- SHUFFLE LOGIC ---
-        # 1. Randomly shuffle the order of questions
-        random.shuffle(questions)
+        # --- [NEW] DATA CLEANUP: FIX MISPLACED EXPLANATIONS ---
+        # This loop corrects data where the parser may have mistakenly included
+        # the "Ex:" line as one of the options.
+        for q in questions:
+            explanation_text = None
+            # Find and extract the explanation from the options list
+            for opt in q.get("options", []):
+                if opt.strip().startswith("Ex:"):
+                    # Store the explanation text (without the "Ex: " prefix)
+                    explanation_text = opt.strip().replace("Ex:", "").strip()
+                    break  # Found it
 
-        # 2. For each question, reverse its options and fix the correct index
+            # If an explanation was found in the options...
+            if explanation_text:
+                # ...assign it to the correct 'explanation' key
+                q["explanation"] = explanation_text
+                # ...and create a new 'options' list that filters out the explanation line
+                q["options"] = [opt for opt in q.get("options", []) if not opt.strip().startswith("Ex:")]
+
+        # --- SHUFFLE LOGIC ---
+        random.shuffle(questions)
         for q in questions:
             opts = q.get("options", [])
             ci = q.get("correctIndex", -1)
             if len(opts) > 1:
-                # Reverse options in-place
                 opts.reverse()
-                # Adjust correct index after reversal
                 if ci is not None and ci != -1:
                     q["correctIndex"] = len(opts) - 1 - ci
                 else:
@@ -106,12 +117,13 @@ async def shufftxt_handler(client, message: Message):
             qtext = q.get("text", "").replace("\r", "")
             out_lines.append(f"{i}. {qtext}")
             for idx, opt in enumerate(q.get("options", [])):
-                prefix = f"{chr(97 + idx)})"  # a), b), ...
+                prefix = f"{chr(97 + idx)})"
                 mark = " ✅" if idx == q.get("correctIndex", -1) else ""
                 out_lines.append(f"{prefix} {opt}{mark}")
+            # This part now works correctly because the explanation is in the right place
             if q.get("explanation"):
                 out_lines.append(f"Ex: {q.get('explanation')}")
-            out_lines.append("")  # Blank line between questions
+            out_lines.append("")
 
         # --- SEND THE RESULT ---
         final_txt = "\n".join(out_lines).strip()
@@ -122,9 +134,8 @@ async def shufftxt_handler(client, message: Message):
         await message.reply_document(file_obj, caption="✅ Shuffled questions generated successfully!")
 
     except Exception as e:
-        # Send a brief error message for debugging
         await message.reply_text(f"❌ An error occurred while processing the file: {e}")
-            
+
 #dg
 
 def parse_format_dash(txt: str):
