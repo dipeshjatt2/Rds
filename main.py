@@ -698,7 +698,7 @@ async def generate_ai_mcqs(client, message: Message):
     Example: /ai "Indian History" 30
     """
     if not GEMINI_API_KEY:
-        await message.reply_text("âŒ **AI Error:** `aikey` (GEMINI_API_KEY) is not configured by the bot owner.")
+        await message.reply_text("😭 **AI Error:** `aikey` (GEMINI_API_KEY) is not configured by the bot owner.")
         return
 
     # --- 1. Parse Input ---
@@ -719,22 +719,22 @@ async def generate_ai_mcqs(client, message: Message):
              amount_str = message.text.split(f'"{topic}"', 1)[-1].strip()
         
         if not topic:
-             await message.reply_text("âŒ No topic provided. Usage: `/ai [Topic] [Amount]`")
+             await message.reply_text("🫠😭 No topic provided. Usage: `/ai [Topic] [Amount]`")
              return
 
         amount = int(amount_str)
         if amount <= 0 or amount > 50: # Set a reasonable limit
-            await message.reply_text("âŒ Please provide an amount between 1 and 50.")
+            await message.reply_text("🫠 Please provide an amount between 1 and 50.")
             return
 
     except (ValueError, TypeError):
-        await message.reply_text("âŒ **Invalid Format:** Usage: `/ai [Topic Name] [Amount]`\n**Example:** `/ai \"Gupta Empire\" 20`")
+        await message.reply_text("😴😭 **Invalid Format:** Usage: `/ai [Topic Name] [Amount]`\n**Example:** `/ai \"Gupta Empire\" 20`")
         return
     except Exception as e:
         await message.reply_text(f"Error parsing command: {e}")
         return
 
-    status_msg = await message.reply_text(f"ðŸ¤“ **Generating {amount} MCQs for \"{topic}\"...**\nThis may take a moment.")
+    status_msg = await message.reply_text(f"🇮🇳✅️♻️“ **Generating {amount} MCQs for \"{topic}\"...**\nThis may take a moment.")
 
     # --- 2. Build AI Prompt ---
     prompt_text = f"""Create {amount} MCQs on the topic {topic} in both English and Hindi (bilingual format) at a medium level.
@@ -795,7 +795,7 @@ Now make the MCQs for the topic: {topic}
          await status_msg.edit("😄 **Request Timed Out:** The AI took too long to respond.")
          return
     except Exception as e:
-        await status_msg.edit(f"âŒ **HTTP Request Failed:**\n`{str(e)}`")
+        await status_msg.edit(f"😭 **HTTP Request Failed:**\n`{str(e)}`")
         return
 
     # --- 4. Parse Response and Create File ---
@@ -806,7 +806,7 @@ Now make the MCQs for the topic: {topic}
         clean_text = re.sub(r'^```(markdown|text|)?\s*|\s*```$', '', raw_text, flags=re.MULTILINE | re.DOTALL).strip()
 
         if not clean_text or len(clean_text) < 50:
-             await status_msg.edit(f"âŒ **Empty Response:** The AI returned an empty or invalid response.\n`{response_json}`")
+             await status_msg.edit(f"😭 **Empty Response:** The AI returned an empty or invalid response.\n`{response_json}`")
              return
 
         # Create the file name as requested
@@ -815,20 +815,20 @@ Now make the MCQs for the topic: {topic}
         filename = f"{topic_cleaned}_mcqs_by_{message.from_user.id}.txt"
 
         # Create file in memory
-        file_data = io.BytesIO(clean_text.encode('utf-8'))
+        file_data = io.BytesIO(clean_text.encode('utf-8-sig'))
         file_data.name = filename
 
         # --- 5. Upload File ---
         await message.reply_document(
             document=file_data,
-            caption=f"âœ… Here are your {amount} MCQs on **{topic}**!"
+            caption=f"🇮🇳😎 Here are your {amount} MCQs on **{topic}**!"
         )
         await status_msg.delete() # Success, so delete the status message
 
     except (KeyError, IndexError, TypeError):
-        await status_msg.edit(f"âŒ **Failed to Parse AI Response.**\nCould not find text in the response.\n`{response_json}`")
+        await status_msg.edit(f"😭 **Failed to Parse AI Response.**\nCould not find text in the response.\n`{response_json}`")
     except Exception as e:
-        await status_msg.edit(f"âŒ **An error occurred processing the file:**\n`{str(e)}`")
+        await status_msg.edit(f"😭**An error occurred processing the file:**\n`{str(e)}`")
 
 
 @app.on_message(filters.text & ~filters.command(["start", "help", "ai", "create", "txqz", "htmk"]))
