@@ -689,52 +689,67 @@ async def poll2txt_handler(client, message: Message):
     asyncio.create_task(run_scraper(client, message, message.reply_to_message))
 
 # ── 6. [NEW] AI MCQ Generator (/ai) ──
-
 @app.on_message(filters.command("ai"))
 async def generate_ai_mcqs(client, message: Message):
     """
     Generates MCQs using the Gemini AI API.
+    Handles quoted and unquoted topics, and fixes all encoding issues.
     Usage: /ai [topic] [amount]
-    Example: /ai "Indian History" 30
+    Example 1: /ai "Indian History" 30
+    Example 2: /ai Modern Physics 25
     """
     if not GEMINI_API_KEY:
-        await message.reply_text("😭 **AI Error:** `aikey` (GEMINI_API_KEY) is not configured by the bot owner.")
+        await message.reply_text("❌ **AI Error:** `GEMINI_API_KEY` is not configured by the bot owner.")
         return
 
-    # --- 1. Parse Input ---
+    # --- 1. Robust Input Parser ---
     try:
-        parts = message.text.split(None, 2)
-        if len(parts) < 3:
-            await message.reply_text("âŒ **Usage:** `/ai [Topic Name] [Amount]`\n**Example:** `/ai \"Indian History\" 30`")
+        command_parts = message.text.split(None, 1)
+        if len(command_parts) < 2:
+            await message.reply_text(
+                "❌ **Usage:** `/ai [Topic Name] [Amount]`\n"
+                "**Example 1:** `/ai \"Indian History\" 30`\n"
+                "**Example 2:** `/ai Indian History 30`"
+            )
             return
-        
-        # Combine parts [1] and [2...n-1] as the topic if it's not quoted
-        amount_str = parts[-1]
-        topic = " ".join(parts[1:-1])
-        
-        # Check if topic is quoted
-        if message.text.count('"') == 2:
-             topic = re.search(r'"(.*?)"', message.text).group(1)
-             # Get amount after the closing quote
-             amount_str = message.text.split(f'"{topic}"', 1)[-1].strip()
-        
+
+        args_text = command_parts[1].strip()
+        topic = ""
+        amount_str = ""
+
+        # Check for quoted topic first
+        quote_match = re.search(r'^"(.*?)"\s+(\d+)\s*$', args_text)
+        if quote_match:
+            topic = quote_match.group(1)
+            amount_str = quote_match.group(2)
+        else:
+            # Fallback to unquoted topic (everything but the last word)
+            parts = args_text.rsplit(None, 1)
+            if len(parts) == 2 and parts[1].isdigit():
+                topic = parts[0].strip().strip('"')  # Clean up accidental quotes
+                amount_str = parts[1]
+            else:
+                await message.reply_text(
+                    "❌ **Invalid Format.** Please put the amount (number) at the very end.\n"
+                    "**Example 1:** `/ai \"Gupta Empire\" 20`\n"
+                    "**Example 2:** `/ai Gupta Empire 20`"
+                )
+                return
+
         if not topic:
-             await message.reply_text("🫠😭 No topic provided. Usage: `/ai [Topic] [Amount]`")
-             return
+            await message.reply_text("❌ No topic provided. Please specify a topic.")
+            return
 
         amount = int(amount_str)
-        if amount <= 0 or amount > 50: # Set a reasonable limit
-            await message.reply_text("🫠 Please provide an amount between 1 and 50.")
+        if amount <= 0 or amount > 50:
+            await message.reply_text("❌ Please provide an amount between 1 and 50.")
             return
 
-    except (ValueError, TypeError):
-        await message.reply_text("😴😭 **Invalid Format:** Usage: `/ai [Topic Name] [Amount]`\n**Example:** `/ai \"Gupta Empire\" 20`")
-        return
     except Exception as e:
-        await message.reply_text(f"Error parsing command: {e}")
+        await message.reply_text(f"⚠️ Error parsing command: {e}")
         return
 
-    status_msg = await message.reply_text(f"🇮🇳✅️♻️“ **Generating {amount} MCQs for \"{topic}\"...**\nThis may take a moment.")
+    status_msg = await message.reply_text(f"⏳ **Generating {amount} MCQs for \"{topic}\"...**\nThis may take a moment.")
 
     # --- 2. Build AI Prompt ---
     prompt_text = f"""Create {amount} MCQs on the topic {topic} in both English and Hindi (bilingual format) at a medium level.
@@ -743,20 +758,20 @@ Format:
 Each question must be numbered (1., 2., etc.)
 Each question should have exactly 4 options: (a), (b), (c), (d).
 
-Place a âœ… emoji next to the single correct option. Ensure the correct option's position is randomized/shuffled across questions (e.g., not always (a) or (b)).
+Place a ✅ emoji next to the single correct option. Ensure the correct option's position is randomized/shuffled across questions (e.g., not always (a) or (b)).
 
-After each question, add a brief explanation under Ex: (max 200 characters).
+After each question, add a brief explanation under "Ex:" (max 200 characters).
 
 Every explanation MUST end with the text: {STYLISH_SIGNATURE}
 
 Output everything inside a single markdown code block (```). Keep everything concise.
 
 Example format:
-1. Who founded the Tughlaq Dynasty? / à¤¤à¥à¤—à¤²à¤• à¤µà¤‚à¤¶ à¤•à¥€ à¤¸à¥à¤¥à¤¾à¤ªà¤¨à¤¾ à¤•à¤¿à¤¸à¤¨à¥‡ à¤•à¥€?
-(a) Ghiyasuddin Tughlaq / à¤—à¤¼à¤¿à¤¯à¤¾à¤¸à¥à¤¦à¥à¤¦à¥€à¤¨ à¤¤à¥à¤—à¤²à¤• âœ…
-(b) Alauddin Khilji / à¤…à¤²à¤¾à¤‰à¤¦à¥à¤¦à¥€à¤¨ à¤–à¤¿à¤²à¤œà¥€
-(c) Bahlol Lodhi / à¤¬à¤¹à¤²à¥‹à¤² à¤²à¥‹à¤¦à¥€
-(d) Khizr Khan / à¤–à¤¼à¤¿à¤œà¥à¤° à¤–à¤¼à¤¾à¤¨
+1. Who founded the Tughlaq Dynasty? / तुग़लक वंश की स्थापना किसने की?
+(a) Ghiyasuddin Tughlaq / घियासुद्दीन तुग़लक ✅
+(b) Alauddin Khilji / अलाउद्दीन खिलजी
+(c) Bahlol Lodhi / बहलोल लोधी
+(d) Khizr Khan / खिज़र खान
 Ex: Ghiyasuddin Tughlaq founded the dynasty in 1320. {STYLISH_SIGNATURE}
 
 2. Next question...
@@ -766,7 +781,7 @@ Ex: Ghiyasuddin Tughlaq founded the dynasty in 1320. {STYLISH_SIGNATURE}
 Now make the MCQs for the topic: {topic}
 """
 
-    # --- 3. Call Gemini API ---
+    # --- 3. Call Gemini API (with ENCODING FIX) ---
     headers = {
         'Content-Type': 'application/json',
         'X-goog-api-key': GEMINI_API_KEY
@@ -777,38 +792,37 @@ Now make the MCQs for the topic: {topic}
             "temperature": 0.5,
             "topK": 1,
             "topP": 1,
-            "maxOutputTokens": 8192, # Increased token limit for large requests
+            "maxOutputTokens": 8192,
         },
     }
 
-        try:
+    try:
         async with aiohttp.ClientSession() as session:
             async with session.post(GEMINI_API_URL, json=payload, headers=headers, timeout=180) as resp:
-                # First, read the raw bytes from the response
+                # Always read the raw bytes first to control decoding
                 response_bytes = await resp.read()
 
                 if resp.status != 200:
                     # Decode the error message as UTF-8 to display it correctly
-                    error_text = response_bytes.decode('utf-8', errors='ignore') 
-                    await status_msg.edit(f"âŒ **API Error: {resp.status}**\nFailed to get data from AI.\n`{error_text}`")
+                    error_text = response_bytes.decode('utf-8', errors='ignore')
+                    await status_msg.edit(f"❌ **API Error: {resp.status}**\nFailed to get data from AI.\n`{error_text}`")
                     return
                 
-                # --- THIS IS THE CRITICAL FIX ---
+                # --- THIS IS THE CRITICAL ENCODING FIX ---
                 # 1. Decode the raw bytes explicitly using 'utf-8'
                 response_text = response_bytes.decode('utf-8')
                 # 2. Now load the CORRECTLY decoded text as JSON
                 response_json = json.loads(response_text)
                 # --- END FIX ---
 
-
     except asyncio.TimeoutError:
-         await status_msg.edit("😄 **Request Timed Out:** The AI took too long to respond.")
+         await status_msg.edit("❌ **Request Timed Out:** The AI took too long to respond.")
          return
     except Exception as e:
-        await status_msg.edit(f"😭 **HTTP Request Failed:**\n`{str(e)}`")
+        await status_msg.edit(f"❌ **HTTP Request Failed:**\n`{str(e)}`")
         return
 
-    # --- 4. Parse Response and Create File ---
+    # --- 4. Parse Response and Create File (with BOM FIX) ---
     try:
         raw_text = response_json['candidates'][0]['content']['parts'][0]['text']
         
@@ -816,30 +830,31 @@ Now make the MCQs for the topic: {topic}
         clean_text = re.sub(r'^```(markdown|text|)?\s*|\s*```$', '', raw_text, flags=re.MULTILINE | re.DOTALL).strip()
 
         if not clean_text or len(clean_text) < 50:
-             await status_msg.edit(f"😭 **Empty Response:** The AI returned an empty or invalid response.\n`{response_json}`")
+             await status_msg.edit(f"❌ **Empty Response:** The AI returned an empty or invalid response.\n`{response_json}`")
              return
 
         # Create the file name as requested
         topic_cleaned = re.sub(r'[^a-zA-Z0-9]', '', topic.replace(" ", "_"))
-        if len(topic_cleaned) > 50: topic_cleaned = topic_cleaned[:50] # Truncate long filenames
+        if len(topic_cleaned) > 50: topic_cleaned = topic_cleaned[:50]
         filename = f"{topic_cleaned}_mcqs_by_{message.from_user.id}.txt"
 
-        # Create file in memory
+        # Create file in memory using 'utf-8-sig' to add the BOM
         file_data = io.BytesIO(clean_text.encode('utf-8-sig'))
         file_data.name = filename
 
         # --- 5. Upload File ---
         await message.reply_document(
             document=file_data,
-            caption=f"🇮🇳😎 Here are your {amount} MCQs on **{topic}**!"
+            caption=f"✅ Here are your {amount} MCQs on **{topic}**!"
         )
-        await status_msg.delete() # Success, so delete the status message
+        await status_msg.delete()  # Success, so delete the status message
 
     except (KeyError, IndexError, TypeError):
-        await status_msg.edit(f"😭 **Failed to Parse AI Response.**\nCould not find text in the response.\n`{response_json}`")
+        await status_msg.edit(f"❌ **Failed to Parse AI Response.**\nCould not find text in the response.\nFull Response: `{response_json}`")
     except Exception as e:
-        await status_msg.edit(f"😭**An error occurred processing the file:**\n`{str(e)}`")
+        await status_msg.edit(f"❌ **An error occurred processing the file:**\n`{str(e)}`")
 
+    
 
 @app.on_message(filters.text & ~filters.command(["start", "help", "ai", "create", "txqz", "htmk"]))
 async def handle_message(client, message: Message):
