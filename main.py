@@ -693,10 +693,11 @@ async def poll2txt_handler(client, message: Message):
 async def generate_ai_mcqs(client, message: Message):
     """
     Generates MCQs using the Gemini AI API.
-    Handles quoted and unquoted topics, and fixes all encoding issues.
-    Usage: /ai [topic] [amount]
-    Example 1: /ai "Indian History" 30
-    Example 2: /ai Modern Physics 25
+    Handles quoted/unquoted topics, encoding, and optional language flag.
+    Usage:
+      /ai "Indian History" 30 "Hindi"
+      /ai Modern Physics 25 "English"
+      /ai Gupta Empire 20 "Hindi and English"
     """
     if not GEMINI_API_KEY:
         await message.reply_text("❌ **AI Error:** `GEMINI_API_KEY` is not configured by the bot owner.")
@@ -707,32 +708,35 @@ async def generate_ai_mcqs(client, message: Message):
         command_parts = message.text.split(None, 1)
         if len(command_parts) < 2:
             await message.reply_text(
-                "❌ **Usage:** `/ai [Topic Name] [Amount]`\n"
-                "**Example 1:** `/ai \"Indian History\" 30`\n"
-                "**Example 2:** `/ai Indian History 30`"
+                "❌ **Usage:** `/ai [Topic Name] [Amount] [Language]`\n"
+                "**Example 1:** `/ai \"Indian History\" 30 \"Hindi\"`\n"
+                "**Example 2:** `/ai Gupta Empire 20 \"Hindi and English\"`"
             )
             return
 
         args_text = command_parts[1].strip()
-        topic = ""
-        amount_str = ""
+        topic, amount_str, language = "", "", "Hindi and English"  # default bilingual
 
-        # Check for quoted topic first
-        quote_match = re.search(r'^"(.*?)"\s+(\d+)\s*$', args_text)
+        # Regex for quoted topic and optional language
+        quote_match = re.search(r'^"(.*?)"\s+(\d+)(?:\s+"(.*?)")?\s*$', args_text)
         if quote_match:
             topic = quote_match.group(1)
             amount_str = quote_match.group(2)
+            if quote_match.group(3):
+                language = quote_match.group(3).strip()
         else:
-            # Fallback to unquoted topic (everything but the last word)
-            parts = args_text.rsplit(None, 1)
-            if len(parts) == 2 and parts[1].isdigit():
-                topic = parts[0].strip().strip('"')  # Clean up accidental quotes
-                amount_str = parts[1]
+            # Split into parts, expecting ... topic amount [language]
+            parts = args_text.rsplit(None, 2)
+            if len(parts) >= 2 and parts[-2].isdigit():
+                topic = parts[0].strip().strip('"')
+                amount_str = parts[-2]
+                if len(parts) == 3:
+                    language = parts[-1].strip('"')
             else:
                 await message.reply_text(
-                    "❌ **Invalid Format.** Please put the amount (number) at the very end.\n"
-                    "**Example 1:** `/ai \"Gupta Empire\" 20`\n"
-                    "**Example 2:** `/ai Gupta Empire 20`"
+                    "❌ **Invalid Format.** Amount (number) must come before language.\n"
+                    "**Example 1:** `/ai \"Gupta Empire\" 20 \"Hindi\"`\n"
+                    "**Example 2:** `/ai Gupta Empire 20 \"Hindi and English\"`"
                 )
                 return
 
@@ -749,10 +753,12 @@ async def generate_ai_mcqs(client, message: Message):
         await message.reply_text(f"⚠️ Error parsing command: {e}")
         return
 
-    status_msg = await message.reply_text(f"⏳ **Generating {amount} MCQs for \"{topic}\"...**\nThis may take a moment.")
+    status_msg = await message.reply_text(
+        f"⏳ **Generating {amount} MCQs for \ {topic} \ in {language}...**\nThis may take a moment."
+    )
 
     # --- 2. Build AI Prompt ---
-    prompt_text = f"""Create {amount} MCQs on the topic {topic} in both English and Hindi (bilingual format) at a medium level.
+    prompt_text = f"""Create {amount} MCQs on the topic {topic} in **{language}** at a medium level.
 Format:
 
 Each question must be numbered (1., 2., etc.)
@@ -773,10 +779,6 @@ Example format:
 (c) Bahlol Lodhi / बहलोल लोधी
 (d) Khizr Khan / खिज़र खान
 Ex: Ghiyasuddin Tughlaq founded the dynasty in 1320. {STYLISH_SIGNATURE}
-
-2. Next question...
-(a) Option...
-...and so on.
 
 Now make the MCQs for the topic: {topic}
 """
@@ -799,21 +801,15 @@ Now make the MCQs for the topic: {topic}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(GEMINI_API_URL, json=payload, headers=headers, timeout=180) as resp:
-                # Always read the raw bytes first to control decoding
                 response_bytes = await resp.read()
 
                 if resp.status != 200:
-                    # Decode the error message as UTF-8 to display it correctly
                     error_text = response_bytes.decode('utf-8', errors='ignore')
                     await status_msg.edit(f"❌ **API Error: {resp.status}**\nFailed to get data from AI.\n`{error_text}`")
                     return
                 
-                # --- THIS IS THE CRITICAL ENCODING FIX ---
-                # 1. Decode the raw bytes explicitly using 'utf-8'
                 response_text = response_bytes.decode('utf-8')
-                # 2. Now load the CORRECTLY decoded text as JSON
                 response_json = json.loads(response_text)
-                # --- END FIX ---
 
     except asyncio.TimeoutError:
          await status_msg.edit("❌ **Request Timed Out:** The AI took too long to respond.")
@@ -822,39 +818,32 @@ Now make the MCQs for the topic: {topic}
         await status_msg.edit(f"❌ **HTTP Request Failed:**\n`{str(e)}`")
         return
 
-    # --- 4. Parse Response and Create File (with BOM FIX) ---
+    # --- 4. Parse Response and Create File ---
     try:
         raw_text = response_json['candidates'][0]['content']['parts'][0]['text']
-        
-        # Clean the text: remove markdown code block fences
         clean_text = re.sub(r'^```(markdown|text|)?\s*|\s*```$', '', raw_text, flags=re.MULTILINE | re.DOTALL).strip()
 
         if not clean_text or len(clean_text) < 50:
              await status_msg.edit(f"❌ **Empty Response:** The AI returned an empty or invalid response.\n`{response_json}`")
              return
 
-        # Create the file name as requested
         topic_cleaned = re.sub(r'[^a-zA-Z0-9]', '', topic.replace(" ", "_"))
         if len(topic_cleaned) > 50: topic_cleaned = topic_cleaned[:50]
-        filename = f"{topic_cleaned}_mcqs_by_{message.from_user.id}.txt"
+        filename = f"{topic_cleaned}_{language.replace(' ', '_')}_mcqs_by_{message.from_user.id}.txt"
 
-        # Create file in memory using 'utf-8-sig' to add the BOM
         file_data = io.BytesIO(clean_text.encode('utf-8-sig'))
         file_data.name = filename
 
-        # --- 5. Upload File ---
         await message.reply_document(
             document=file_data,
-            caption=f"✅ Here are your {amount} MCQs on **{topic}**!"
+            caption=f"✅ Here are your {amount} MCQs on **{topic}** in **{language}**!"
         )
-        await status_msg.delete()  # Success, so delete the status message
+        await status_msg.delete()
 
     except (KeyError, IndexError, TypeError):
         await status_msg.edit(f"❌ **Failed to Parse AI Response.**\nCould not find text in the response.\nFull Response: `{response_json}`")
     except Exception as e:
         await status_msg.edit(f"❌ **An error occurred processing the file:**\n`{str(e)}`")
-
-    
 
 @app.on_message(filters.text & ~filters.command(["start", "help", "ai", "create", "txqz", "htmk"]))
 async def handle_message(client, message: Message):
