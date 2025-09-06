@@ -26,8 +26,8 @@ from pyrogram.enums import ParseMode, ChatMemberStatus  # Added ChatMemberStatus
 # Variables are now read directly from OS environment
 API_ID = int(os.environ.get("API_ID", "22118129"))
 API_HASH = os.environ.get("API_HASH", "43c66e3314921552d9330a4b05b18800")
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-OWNER_ID = int(os.environ.get("OWNER_ID", "0"))
+BOT_TOKEN = os.environ.get("BOT_TOKEN2")
+OWNER_ID = int(os.environ.get("OWNER_ID", "5203820046"))
 TEMPLATE_HTML = "format2.html" # Note: This variable exists but is unused by the HTML quiz generator
 DB_PATH = "quizzes.db"
 WEB_PORT = int(os.environ.get("WEB_PORT", "5000"))
