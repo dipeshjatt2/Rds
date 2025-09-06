@@ -781,15 +781,25 @@ Now make the MCQs for the topic: {topic}
         },
     }
 
-    try:
+        try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(GEMINI_API_URL, json=payload, headers=headers, timeout=1800) as resp:
+            async with session.post(GEMINI_API_URL, json=payload, headers=headers, timeout=180) as resp:
+                # First, read the raw bytes from the response
+                response_bytes = await resp.read()
+
                 if resp.status != 200:
-                    error_text = await resp.text()
+                    # Decode the error message as UTF-8 to display it correctly
+                    error_text = response_bytes.decode('utf-8', errors='ignore') 
                     await status_msg.edit(f"âŒ **API Error: {resp.status}**\nFailed to get data from AI.\n`{error_text}`")
                     return
                 
-                response_json = await resp.json()
+                # --- THIS IS THE CRITICAL FIX ---
+                # 1. Decode the raw bytes explicitly using 'utf-8'
+                response_text = response_bytes.decode('utf-8')
+                # 2. Now load the CORRECTLY decoded text as JSON
+                response_json = json.loads(response_text)
+                # --- END FIX ---
+
 
     except asyncio.TimeoutError:
          await status_msg.edit("😄 **Request Timed Out:** The AI took too long to respond.")
