@@ -1,5 +1,6 @@
 import asyncio
 import json
+import aiohttp 
 import os
 import re
 import io
@@ -15,7 +16,15 @@ from pyrogram.enums import ParseMode, PollType
 API_ID = 22118129
 API_HASH = "43c66e3314921552d9330a4b05b18800"
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-SESSION_STRING = os.environ.get("SESSION_STRING") 
+SESSION_STRING = os.environ.get("SESSION_STRING") # ── CONFIG ──
+# ... (your existing API_ID, API_HASH, BOT_TOKEN, etc.) ...
+
+
+# --- [NEW] AI Configuration ---
+GEMINI_API_KEY = os.environ.get("aikey") # This is the line you requested
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+STYLISH_SIGNATURE = "@DIPESHCHOUDHARYBOT" # Stylish "by yourname"
+
 
 # This HTML template file must be in the same directory as the bot script.
 TEMPLATE_HTML = "format2.html"
@@ -679,7 +688,150 @@ async def poll2txt_handler(client, message: Message):
     user_sessions[user_id] = True 
     asyncio.create_task(run_scraper(client, message, message.reply_to_message))
 
-@app.on_message(filters.text & ~filters.command(["start", "help", "create", "txqz", "htmk"]))
+# ── 6. [NEW] AI MCQ Generator (/ai) ──
+
+@app.on_message(filters.command("ai"))
+async def generate_ai_mcqs(client, message: Message):
+    """
+    Generates MCQs using the Gemini AI API.
+    Usage: /ai [topic] [amount]
+    Example: /ai "Indian History" 30
+    """
+    if not GEMINI_API_KEY:
+        await message.reply_text("âŒ **AI Error:** `aikey` (GEMINI_API_KEY) is not configured by the bot owner.")
+        return
+
+    # --- 1. Parse Input ---
+    try:
+        parts = message.text.split(None, 2)
+        if len(parts) < 3:
+            await message.reply_text("âŒ **Usage:** `/ai [Topic Name] [Amount]`\n**Example:** `/ai \"Indian History\" 30`")
+            return
+        
+        # Combine parts [1] and [2...n-1] as the topic if it's not quoted
+        amount_str = parts[-1]
+        topic = " ".join(parts[1:-1])
+        
+        # Check if topic is quoted
+        if message.text.count('"') == 2:
+             topic = re.search(r'"(.*?)"', message.text).group(1)
+             # Get amount after the closing quote
+             amount_str = message.text.split(f'"{topic}"', 1)[-1].strip()
+        
+        if not topic:
+             await message.reply_text("âŒ No topic provided. Usage: `/ai [Topic] [Amount]`")
+             return
+
+        amount = int(amount_str)
+        if amount <= 0 or amount > 50: # Set a reasonable limit
+            await message.reply_text("âŒ Please provide an amount between 1 and 50.")
+            return
+
+    except (ValueError, TypeError):
+        await message.reply_text("âŒ **Invalid Format:** Usage: `/ai [Topic Name] [Amount]`\n**Example:** `/ai \"Gupta Empire\" 20`")
+        return
+    except Exception as e:
+        await message.reply_text(f"Error parsing command: {e}")
+        return
+
+    status_msg = await message.reply_text(f"ðŸ¤“ **Generating {amount} MCQs for \"{topic}\"...**\nThis may take a moment.")
+
+    # --- 2. Build AI Prompt ---
+    prompt_text = f"""Create {amount} MCQs on the topic {topic} in both English and Hindi (bilingual format) at a medium level.
+Format:
+
+Each question must be numbered (1., 2., etc.)
+Each question should have exactly 4 options: (a), (b), (c), (d).
+
+Place a âœ… emoji next to the single correct option. Ensure the correct option's position is randomized/shuffled across questions (e.g., not always (a) or (b)).
+
+After each question, add a brief explanation under Ex: (max 200 characters).
+
+Every explanation MUST end with the text: {STYLISH_SIGNATURE}
+
+Output everything inside a single markdown code block (```). Keep everything concise.
+
+Example format:
+1. Who founded the Tughlaq Dynasty? / à¤¤à¥à¤—à¤²à¤• à¤µà¤‚à¤¶ à¤•à¥€ à¤¸à¥à¤¥à¤¾à¤ªà¤¨à¤¾ à¤•à¤¿à¤¸à¤¨à¥‡ à¤•à¥€?
+(a) Ghiyasuddin Tughlaq / à¤—à¤¼à¤¿à¤¯à¤¾à¤¸à¥à¤¦à¥à¤¦à¥€à¤¨ à¤¤à¥à¤—à¤²à¤• âœ…
+(b) Alauddin Khilji / à¤…à¤²à¤¾à¤‰à¤¦à¥à¤¦à¥€à¤¨ à¤–à¤¿à¤²à¤œà¥€
+(c) Bahlol Lodhi / à¤¬à¤¹à¤²à¥‹à¤² à¤²à¥‹à¤¦à¥€
+(d) Khizr Khan / à¤–à¤¼à¤¿à¤œà¥à¤° à¤–à¤¼à¤¾à¤¨
+Ex: Ghiyasuddin Tughlaq founded the dynasty in 1320. {STYLISH_SIGNATURE}
+
+2. Next question...
+(a) Option...
+...and so on.
+
+Now make the MCQs for the topic: {topic}
+"""
+
+    # --- 3. Call Gemini API ---
+    headers = {
+        'Content-Type': 'application/json',
+        'X-goog-api-key': GEMINI_API_KEY
+    }
+    payload = {
+        "contents": [{"parts": [{"text": prompt_text}]}],
+         "generationConfig": {
+            "temperature": 0.5,
+            "topK": 1,
+            "topP": 1,
+            "maxOutputTokens": 8192, # Increased token limit for large requests
+        },
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(GEMINI_API_URL, json=payload, headers=headers, timeout=1800) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    await status_msg.edit(f"âŒ **API Error: {resp.status}**\nFailed to get data from AI.\n`{error_text}`")
+                    return
+                
+                response_json = await resp.json()
+
+    except asyncio.TimeoutError:
+         await status_msg.edit("😄 **Request Timed Out:** The AI took too long to respond.")
+         return
+    except Exception as e:
+        await status_msg.edit(f"âŒ **HTTP Request Failed:**\n`{str(e)}`")
+        return
+
+    # --- 4. Parse Response and Create File ---
+    try:
+        raw_text = response_json['candidates'][0]['content']['parts'][0]['text']
+        
+        # Clean the text: remove markdown code block fences
+        clean_text = re.sub(r'^```(markdown|text|)?\s*|\s*```$', '', raw_text, flags=re.MULTILINE | re.DOTALL).strip()
+
+        if not clean_text or len(clean_text) < 50:
+             await status_msg.edit(f"âŒ **Empty Response:** The AI returned an empty or invalid response.\n`{response_json}`")
+             return
+
+        # Create the file name as requested
+        topic_cleaned = re.sub(r'[^a-zA-Z0-9]', '', topic.replace(" ", "_"))
+        if len(topic_cleaned) > 50: topic_cleaned = topic_cleaned[:50] # Truncate long filenames
+        filename = f"{topic_cleaned}_mcqs_by_{message.from_user.id}.txt"
+
+        # Create file in memory
+        file_data = io.BytesIO(clean_text.encode('utf-8'))
+        file_data.name = filename
+
+        # --- 5. Upload File ---
+        await message.reply_document(
+            document=file_data,
+            caption=f"âœ… Here are your {amount} MCQs on **{topic}**!"
+        )
+        await status_msg.delete() # Success, so delete the status message
+
+    except (KeyError, IndexError, TypeError):
+        await status_msg.edit(f"âŒ **Failed to Parse AI Response.**\nCould not find text in the response.\n`{response_json}`")
+    except Exception as e:
+        await status_msg.edit(f"âŒ **An error occurred processing the file:**\n`{str(e)}`")
+
+
+@app.on_message(filters.text & ~filters.command(["start", "help", "ai", "create", "txqz", "htmk"]))
 async def handle_message(client, message: Message):
     uid = message.from_user.id
     if uid not in user_state:
