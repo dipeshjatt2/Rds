@@ -745,8 +745,8 @@ async def generate_ai_mcqs(client, message: Message):
             return
 
         amount = int(amount_str)
-        if amount <= 0 or amount > 50:
-            await message.reply_text("❌ Please provide an amount between 1 and 50.")
+        if amount <= 0 or amount > 500:
+            await message.reply_text("❌ Please provide an amount between 1 and 500.")
             return
 
     except Exception as e:
@@ -800,7 +800,7 @@ Now make the MCQs for the topic: {topic}
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(GEMINI_API_URL, json=payload, headers=headers, timeout=180) as resp:
+            async with session.post(GEMINI_API_URL, json=payload, headers=headers, timeout=1800) as resp:
                 response_bytes = await resp.read()
 
                 if resp.status != 200:
