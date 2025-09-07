@@ -754,7 +754,7 @@ async def generate_ai_mcqs(client, message: Message):
         return
 
     status_msg = await message.reply_text(
-        f"⏳ **Generating {amount} MCQs for \ {topic} \ in {language}...**\nThis may take a moment."
+        f"⏳ **Generating {amount} MCQs for `{topic}` in {language}...**\nThis may take a moment."
     )
 
     # --- 2. Build AI Prompt ---
@@ -836,7 +836,7 @@ Now make the MCQs for the topic: {topic}
 
         await message.reply_document(
             document=file_data,
-            caption=f"✅ Here are your {amount} MCQs on **{topic}** in **{language}**!"
+            caption=f"✅ Here are your {amount} MCQs on `{topic}` in **{language}**!"
         )
         await status_msg.delete()
 
