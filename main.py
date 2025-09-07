@@ -434,7 +434,7 @@ async def txqz(client, message: Message):
                 options=q['options'],
                 type=PollType.QUIZ,
                 correct_option_id=q['correct'],
-                is_anonymous=True,
+                is_anonymous=False,
                 explanation=q['explanation'] if q['explanation'] else None,
                 explanation_parse_mode=ParseMode.DEFAULT
             )
@@ -758,7 +758,7 @@ async def generate_ai_mcqs(client, message: Message):
     )
 
     # --- 2. Build AI Prompt ---
-    prompt_text = f"""Create {amount} MCQs on the topic {topic} in **{language}** at a medium level.
+    prompt_text = f"""Create {amount} MCQs on the topic {topic} in **{language}** at a difficult level.
 Format:
 
 Each question must be numbered (1., 2., etc.)
