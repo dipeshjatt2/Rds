@@ -434,7 +434,7 @@ async def txqz(client, message: Message):
                 options=q['options'],
                 type=PollType.QUIZ,
                 correct_option_id=q['correct'],
-                is_anonymous=False,
+                is_anonymous=True,
                 explanation=q['explanation'] if q['explanation'] else None,
                 explanation_parse_mode=ParseMode.DEFAULT
             )
