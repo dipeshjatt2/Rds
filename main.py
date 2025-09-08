@@ -845,6 +845,165 @@ Now make the MCQs for the topic: {topic}
     except Exception as e:
         await status_msg.edit(f"❌ **An error occurred processing the file:**\n`{str(e)}`")
 
+# ── 7. [NEW] AI Content Arranger (/arrange) ──
+@app.on_message(filters.command("arrange"))
+async def arrange_handler(client, message: Message):
+    """
+    Handles the /arrange command.
+    Usage: Reply to a .txt file (max 80KB) with /arrange.
+    The bot will send the text content to the AI and ask it to reformat
+    it into the standardized quiz format.
+    """
+    # --- 1. Check API Key ---
+    if not GEMINI_API_KEY:
+        await message.reply_text("❌ **AI Error:** `GEMINI_API_KEY` is not configured by the bot owner.")
+        return
+
+    # --- 2. Validate Input Message ---
+    target_msg = message.reply_to_message
+    if not target_msg or not target_msg.document:
+        await message.reply_text(
+            "⚠️ **Usage:** Please reply to a `.txt` file with the command `/arrange`."
+        )
+        return
+
+    doc = target_msg.document
+    fname = (doc.file_name or "file.dat").lower()
+
+    if not fname.endswith(".txt"):
+        await message.reply_text("❌ Unsupported file type. Please reply to a `.txt` file.")
+        return
+    
+    if doc.file_size > 80 * 1024: # 80 KB limit
+        await message.reply_text("❌ **File Too Large:** The input file must be under 80 KB.")
+        return
+
+    status_msg = await message.reply_text("⏳ Downloading and reading file...")
+
+    # --- 3. Read File Content ---
+    try:
+        path = await target_msg.download()
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            raw_text_content = f.read()
+        
+        try:
+            os.remove(path)
+        except Exception:
+            pass # Continue even if deletion fails
+
+        if not raw_text_content.strip():
+            await status_msg.edit("❌ The file appears to be empty.")
+            return
+
+    except Exception as e:
+        await status_msg.edit(f"❌ An error occurred while reading the file: {e}")
+        return
+
+    await status_msg.edit("🤖 **Contacting AI...**\nAsking AI to arrange the content. This may take a moment.")
+
+    # --- 4. Build AI Prompt ---
+    # This prompt instructs the AI to use the provided text as source material
+    # and reformat it according to the user's exact specifications.
+    prompt_text = f"""Please analyze the following unstructured text content and meticulously reformat it into a structured MCQ (Multiple Choice Question) format.
+
+Your task is to convert the raw data provided below into a clean, numbered list of questions.
+
+REQUIRED OUTPUT FORMAT:
+- Each question must be numbered (1., 2., etc.).
+- Each question must have all its options listed below it, prefixed with (a), (b), (c), (d), etc. (Include all relevant options, e.g., (e) if present).
+- You MUST identify the single correct option for each question and place a ✅ emoji right after it.
+- Ensure the position of the correct answer (✅) is varied (randomized) across different questions.
+- After the options, you MUST include a brief explanation prefixed with "Ex:".
+- Every explanation line MUST end with the signature: {STYLISH_SIGNATURE}
+- The entire output MUST be enclosed in a single markdown code block (```).
+
+Example of the REQUIRED format:
+1. Who founded the Tughlaq Dynasty? / तुग़लक वंश की स्थापना किसने की?
+(a) Ghiyasuddin Tughlaq / घियासुद्दीन तुग़लक ✅
+(b) Alauddin Khilji / अलाउद्दीन खिलजी
+(c) Bahlol Lodhi / बहलोल लोधी
+(d) Khizr Khan / खिज़र खान
+Ex: Ghiyasuddin Tughlaq founded the dynasty in 1320. {STYLISH_SIGNATURE}
+
+---
+Here is the RAW TEXT CONTENT you must reformat:
+
+{raw_text_content}
+---
+
+Now, arrange the text above according to the specified format. Ensure every rule is followed.
+"""
+
+    # --- 5. Call Gemini API (Copied from /ai handler) ---
+    headers = {
+        'Content-Type': 'application/json',
+        'X-goog-api-key': GEMINI_API_KEY
+    }
+    payload = {
+        "contents": [{"parts": [{"text": prompt_text}]}],
+         "generationConfig": {
+            "temperature": 0.3, # Lower temperature for formatting tasks
+            "topK": 1,
+            "topP": 1,
+            "maxOutputTokens": 8192,
+        },
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(GEMINI_API_URL, json=payload, headers=headers, timeout=1800) as resp:
+                response_bytes = await resp.read()
+
+                if resp.status != 200:
+                    error_text = response_bytes.decode('utf-8', errors='ignore')
+                    await status_msg.edit(f"❌ **API Error: {resp.status}**\nFailed to get data from AI.\n`{error_text}`")
+                    return
+                
+                response_text = response_bytes.decode('utf-8')
+                response_json = json.loads(response_text)
+
+    except asyncio.TimeoutError:
+         await status_msg.edit("❌ **Request Timed Out:** The AI took too long to respond.")
+         return
+    except Exception as e:
+        await status_msg.edit(f"❌ **HTTP Request Failed:**\n`{str(e)}`")
+        return
+
+    # --- 6. Parse Response and Create File ---
+    try:
+        raw_text = response_json['candidates'][0]['content']['parts'][0]['text']
+        # Clean the markdown block wrapper (```) from the AI response
+        clean_text = re.sub(r'^```(markdown|text|)?\s*|\s*```$', '', raw_text, flags=re.MULTILINE | re.DOTALL).strip()
+
+        if not clean_text or len(clean_text) < 20:
+             await status_msg.edit(f"❌ **Empty Response:** The AI returned an empty or invalid formatted response.\n`{response_json}`")
+             return
+
+        # Create the output file
+        base_name = os.path.splitext(fname)[0]
+        filename = f"arranged_{base_name}.txt"
+
+        file_data = io.BytesIO(clean_text.encode('utf-8-sig')) # Use utf-8-sig to include BOM
+        file_data.name = filename
+
+        await message.reply_document(
+            document=file_data,
+            caption=f"✅ AI has successfully arranged your file!"
+        )
+        await status_msg.delete()
+
+    except (KeyError, IndexError, TypeError):
+        await status_msg.edit(f"❌ **Failed to Parse AI Response.**\nCould not find text in the response.\nFull Response: `{response_json}`")
+    except Exception as e:
+        await status_msg.edit(f"❌ **An error occurred processing the output file:**\n`{str(e)}`")
+
+
+@app.on_message(filters.text & ~filters.command(["start", "help", "ai", "create", "txqz", "htmk", "arrange", "poll2txt", "shufftxt"])) # Add "arrange" to the ignore list
+async def handle_message(client, message: Message):
+    uid = message.from_user.id
+    # ... (rest of your handle_message function)
+
+
 @app.on_message(filters.text & ~filters.command(["start", "help", "ai", "create", "txqz", "htmk"]))
 async def handle_message(client, message: Message):
     uid = message.from_user.id
