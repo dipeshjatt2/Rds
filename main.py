@@ -22,7 +22,7 @@ SESSION_STRING = os.environ.get("SESSION_STRING") # ── CONFIG ──
 
 # --- [NEW] AI Configuration ---
 GEMINI_API_KEY = os.environ.get("aikey") # This is the line you requested
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent"
 STYLISH_SIGNATURE = "@DIPESHCHOUDHARYBOT" # Stylish "by yourname"
 
 
