@@ -324,11 +324,23 @@ def replace_questions_in_template(html: str, questions, minutes:int, negative:fl
 @app.on_message(filters.command(["start", "help"]))
 async def start_handler(_, message: Message):
     await message.reply_text(
-        "👋 **Welcome!**\n\n"
+         "👋 **Welcome!**\n\n"
         "Here's what I can do:\n\n"
-        "🔹 **/create** - Create a quiz poll manually, one step at a time.\n"
-        "🔹 **/txqz** - Paste text or reply to a file to create multiple quiz polls at once.\n"
-        "🔹 **/htmk** - Convert a quiz from a `.txt` or `.csv` file into an interactive HTML file."
+        "🤖 **AI Commands**\n"
+        "🔹 **/ai** - Generates new MCQs from any topic.\n"
+        "🔹 **/arrange** - [Reply] Uses AI to reformat a `.txt` file into a quiz.\n\n"
+        
+        "🔂 **Conversion & Scraping**\n"
+        "🔹 **/txqz** - Paste text or reply to a file to create multiple quiz polls.\n"
+        "🔹 **/poll2txt** - [Reply] Scrapes a quiz bot start message to get all polls.\n\n"
+
+        "⚙️ **Utility**\n"
+        "🔹 **/htmk** - Convert a quiz file (`.txt` or `.csv`) into an interactive HTML file.\n"
+        "🔹 **/shufftxt** - [Reply] Shuffles questions and options in a quiz file.\n"
+        "🔹 **/create** - Create a single quiz poll manually.\n\n"
+        
+        "───────────────────\n"
+        "🧑‍💻 **Developer:** @dipesh_choudhary_rj"
     )
 
 # ── 1. Manual Quiz Creation (/create) ──
