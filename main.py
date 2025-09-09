@@ -611,17 +611,20 @@ async def document_handler(client, message: Message):
 
 # ── 4. Main State Machine for Text Messages ──
 # ── 5. Poll Scraper (/poll2txt) ──
-MAX_POLLS = 10 # Set the maximum number of polls to fetch
+
+
+import re # Make sure this is at the top of your file
+
+MAX_POLLS = 100 # Set the maximum number of polls to fetch
 
 async def run_scraper(main_bot_client: Client, user_message: Message, replied_message: Message):
     """
     This helper function manages the entire userbot scraping process.
     
-    [MODIFIED - V5]:
-      - [LOGIC FIX]: Removed the internal username check inside poll_handler. The handler
-        will now process ANY poll received in the private chat with the bot, 
-        which fixes the issue of polls not being answered.
-      - All other logic (V4 answer fetching, "Try Again" feature, /data4 format) remains.
+    [MODIFIED - V6]:
+      - [CRITICAL FIX]: Corrected the get_messages call from 'message_id=' to 'message_ids='.
+        This was causing the scraper to fail its fetch, skip all logic, 
+        and default to option 0 every time. This should fix the core bug.
     """
     user_id = user_message.from_user.id
     chat_id = user_message.chat.id
@@ -656,11 +659,8 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
             """
             This handler uses the exact answer-fetching logic from Script 2 (save_poll).
             """
-            # [FIX]: Removed the filter check. We will process ANY poll received in this
-            # private, temporary session, as it MUST be from the quiz bot.
-            # if not poll_message.from_user or poll_message.from_user.username.lower() != bot_username.lower():
-            #     return
-
+            # Any poll in this private session MUST be from the quiz bot.
+            
             # --- [START: EXACT LOGIC FROM SCRIPT 2 'save_poll'] ---
             poll = poll_message.poll
             correct_index = None
@@ -677,9 +677,10 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
                 await asyncio.sleep(5) 
                 
                 # 3. Re-fetch the message to get the updated poll data
+                # [FIXED HERE]: Changed 'message_id' to 'message_ids'
                 updated_message = await userbot.get_messages(
                     chat_id=poll_message.chat.id,
-                    message_id=poll_message.id
+                    message_ids=poll_message.id 
                 )
                 
                 # 4. Reliably get the correct_option_id using all fallbacks
@@ -802,7 +803,11 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
             await userbot.stop()
         if user_id in user_sessions:
             del user_sessions[user_id]
-        await status_msg.edit(f"🛑 **Scraping Finished!**\n\nReason: {scraped_data.get('stop_reason', 'N/A')}\nTotal polls collected: {len(scraped_data['polls'])}\n\nFormatting data...")
+        # Only edit the status message if it hasn't been deleted or encountered an error
+        try:
+            await status_msg.edit(f"🛑 **Scraping Finished!**\n\nReason: {scraped_data.get('stop_reason', 'N/A')}\nTotal polls collected: {len(scraped_data['polls'])}\n\nFormatting data...")
+        except:
+            pass # Ignore if message was already deleted or inaccessible
 
     # --- Format and Send Data (Matching /data4 format) ---
     if not scraped_data["polls"]:
@@ -871,7 +876,7 @@ async def poll2txt_handler(client, message: Message):
         return
 
     user_sessions[user_id] = True 
-    # This line is now correct and contains no SyntaxError
+    # This line is correct and contains no SyntaxError
     asyncio.create_task(run_scraper(client, message, message.reply_to_message))
 
 # ── 6. [NEW] AI MCQ Generator (/ai) ──
