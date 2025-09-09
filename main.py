@@ -23,7 +23,7 @@ SESSION_STRING = os.environ.get("SESSION_STRING") # ── CONFIG ──
 # --- [NEW] AI Configuration ---
 GEMINI_API_KEY = os.environ.get("aikey") # This is the line you requested
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent"
-STYLISH_SIGNATURE = "@DIPESHCHOUDHARYBOT" # Stylish "by yourname"
+STYLISH_SIGNATURE = "@andr0ipie9" # Stylish "by yourname"
 
 
 # This HTML template file must be in the same directory as the bot script.
@@ -326,21 +326,26 @@ async def start_handler(_, message: Message):
     await message.reply_text(
          "👋 **Welcome!**\n\n"
         "Here's what I can do:\n\n"
+
+        "──────────────────────────\n"
         "🤖 **AI Commands**\n"
         "🔹 **/ai** - Generates new MCQs from any topic.\n"
         "🔹 **/arrange** - [Reply] Uses AI to reformat a `.txt` file into a quiz.\n\n"
+        "──────────────────────────\n"
         
         "🔂 **Conversion & Scraping**\n"
         "🔹 **/txqz** - Paste text or reply to a file to create multiple quiz polls.\n"
         "🔹 **/poll2txt** - [Reply] Scrapes a quiz bot start message to get all polls.\n\n"
-
+        
+        "──────────────────────────\n"
+        
         "⚙️ **Utility**\n"
         "🔹 **/htmk** - Convert a quiz file (`.txt` or `.csv`) into an interactive HTML file.\n"
         "🔹 **/shufftxt** - [Reply] Shuffles questions and options in a quiz file.\n"
         "🔹 **/create** - Create a single quiz poll manually.\n\n"
         
-        "───────────────────\n"
-        "🧑‍💻 **Developer:** @dipesh_choudhary_rj"
+        "──────────────────────────\n"
+        "🧑‍💻 **Developer:** @andr0ipie9"
     )
 
 # ── 1. Manual Quiz Creation (/create) ──
