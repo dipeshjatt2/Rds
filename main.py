@@ -147,6 +147,101 @@ async def shufftxt_handler(client, message: Message):
         await message.reply_text(f"❌ An error occurred while processing the file: {e}")
 
 #dg
+ # <-- Make sure this import is at the top of your script with the others!
+
+# ── PHONE LOOKUP HANDLER (/ph) ──
+
+@app.on_message(filters.command("ph"))
+async def phone_lookup_handler(client, message: Message):
+    """
+    Looks up a phone number via the specified API and formats the result.
+    Usage: /ph [number]
+    """
+    # 1. Validate Input
+    try:
+        command_parts = message.text.split(None, 1)
+        if len(command_parts) < 2:
+            await message.reply_text("<b>Usage:</b> <code>/ph [number]</code>\n\nPlease provide a phone number to search.", parse_mode=ParseMode.HTML)
+            return
+        
+        phone_number = command_parts[1].strip()
+        # Basic check to ensure it looks like a number
+        if not phone_number.isdigit() or len(phone_number) < 10:
+             await message.reply_text("<b>Invalid number.</b> Please provide a valid 10-digit mobile number.", parse_mode=ParseMode.HTML)
+             return
+    except Exception:
+        await message.reply_text("Error parsing your command. Please check the format.")
+        return
+
+    status_msg = await message.reply_text(f"🔍 <b>Searching details for:</b> <code>{phone_number}</code>...", parse_mode=ParseMode.HTML)
+
+    # 2. Define API details and make the request
+    API_URL = "https://e1e63696f2d5.ngrok-free.app/index.cpp"
+    PARAMS = {
+        "key": "dark",
+        "number": phone_number
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            # Set a 15-second timeout for the request
+            async with session.get(API_URL, params=PARAMS, timeout=15) as resp:
+                
+                if resp.status != 200:
+                    await status_msg.edit(f"❌ <b>API Error:</b> Received status code <code>{resp.status}</code>. The service might be down.", parse_mode=ParseMode.HTML)
+                    return
+                
+                # Get the response as JSON
+                data = await resp.json()
+
+    except aiohttp.ClientConnectorError:
+        await status_msg.edit("❌ <b>Network Error:</b> Could not connect to the service. The (ngrok) API may be offline.", parse_mode=ParseMode.HTML)
+        return
+    except asyncio.TimeoutError:
+        await status_msg.edit("❌ <b>Request Timed Out:</b> The server took too long to respond.", parse_mode=ParseMode.HTML)
+        return
+    except (json.JSONDecodeError, aiohttp.ContentTypeError):
+         await status_msg.edit("❌ <b>API Error:</b> The server returned invalid data (expected JSON).", parse_mode=ParseMode.HTML)
+         return
+    except Exception as e:
+        await status_msg.edit(f"❌ <b>An unexpected error occurred:</b>\n<code>{html.escape(str(e))}</code>", parse_mode=ParseMode.HTML)
+        return
+
+    # 3. Parse and Format the Response
+    try:
+        results = data.get("data")
+        if not results or not isinstance(results, list):
+            await status_msg.edit(f"🤷 <b>No results found</b> for <code>{phone_number}</code>.", parse_mode=ParseMode.HTML)
+            return
+
+        # Start building the formatted output message
+        response_text = f"✅ <b>Found {len(results)} result(s) for <code>{phone_number}</code>:</b>\n"
+        
+        for i, entry in enumerate(results, start=1):
+            # Use html.escape to safely display data, even if it contains < or >
+            name = html.escape(entry.get("name", "N/A"))
+            fname = html.escape(entry.get("fname", "N/A"))
+            # Replace '!' separators in the address with newlines for readability
+            address = html.escape(entry.get("address", "N/A")).replace("!", "\n")
+            circle = html.escape(entry.get("circle", "N/A"))
+            mobile = html.escape(entry.get("mobile", "N/A"))
+            
+            # Append each formatted result to the message
+            response_text += f"\n───────────────\n"
+            response_text += f"👤 <b>Result {i}:</b>\n"
+            response_text += f"┣ <b>Name:</b> <code>{name}</code>\n"
+            response_text += f"┣ <b>Father's Name:</b> <code>{fname}</code>\n"
+            response_text += f"┣ <b>Mobile:</b> <code>{mobile}</code>\n"
+            response_text += f"┣ <b>Circle:</b> <code>{circle}</code>\n"
+            response_text += f"┗ <b>Address:</b>\n<code>{address}</code>\n"
+
+        # Edit the original status message with the final formatted results
+        await status_msg.edit(response_text, parse_mode=ParseMode.HTML)
+
+    except Exception as e:
+        await status_msg.edit(f"❌ <b>Error formatting data:</b>\n<code>{html.escape(str(e))}</code>", parse_mode=ParseMode.HTML)
+
+
 
 def parse_format_dash(txt: str):
     """Q#: ... with dash-prefixed options and Ex: explanation"""
@@ -1022,99 +1117,7 @@ async def handle_message(client, message: Message):
     # ... (rest of your handle_message function)
  # <-- Make sure this import is at the top of your script with the others!
 
-# ── PHONE LOOKUP HANDLER (/ph) ──
-
-@app.on_message(filters.command("ph"))
-async def phone_lookup_handler(client, message: Message):
-    """
-    Looks up a phone number via the specified API and formats the result.
-    Usage: /ph [number]
-    """
-    # 1. Validate Input
-    try:
-        command_parts = message.text.split(None, 1)
-        if len(command_parts) < 2:
-            await message.reply_text("<b>Usage:</b> <code>/ph [number]</code>\n\nPlease provide a phone number to search.", parse_mode=ParseMode.HTML)
-            return
-        
-        phone_number = command_parts[1].strip()
-        # Basic check to ensure it looks like a number
-        if not phone_number.isdigit() or len(phone_number) < 10:
-             await message.reply_text("<b>Invalid number.</b> Please provide a valid 10-digit mobile number.", parse_mode=ParseMode.HTML)
-             return
-    except Exception:
-        await message.reply_text("Error parsing your command. Please check the format.")
-        return
-
-    status_msg = await message.reply_text(f"🔍 <b>Searching details for:</b> <code>{phone_number}</code>...", parse_mode=ParseMode.HTML)
-
-    # 2. Define API details and make the request
-    API_URL = "https://e1e63696f2d5.ngrok-free.app/index.cpp"
-    PARAMS = {
-        "key": "dark",
-        "number": phone_number
-    }
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            # Set a 15-second timeout for the request
-            async with session.get(API_URL, params=PARAMS, timeout=15) as resp:
-                
-                if resp.status != 200:
-                    await status_msg.edit(f"❌ <b>API Error:</b> Received status code <code>{resp.status}</code>. The service might be down.", parse_mode=ParseMode.HTML)
-                    return
-                
-                # Get the response as JSON
-                data = await resp.json()
-
-    except aiohttp.ClientConnectorError:
-        await status_msg.edit("❌ <b>Network Error:</b> Could not connect to the service. The (ngrok) API may be offline.", parse_mode=ParseMode.HTML)
-        return
-    except asyncio.TimeoutError:
-        await status_msg.edit("❌ <b>Request Timed Out:</b> The server took too long to respond.", parse_mode=ParseMode.HTML)
-        return
-    except (json.JSONDecodeError, aiohttp.ContentTypeError):
-         await status_msg.edit("❌ <b>API Error:</b> The server returned invalid data (expected JSON).", parse_mode=ParseMode.HTML)
-         return
-    except Exception as e:
-        await status_msg.edit(f"❌ <b>An unexpected error occurred:</b>\n<code>{html.escape(str(e))}</code>", parse_mode=ParseMode.HTML)
-        return
-
-    # 3. Parse and Format the Response
-    try:
-        results = data.get("data")
-        if not results or not isinstance(results, list):
-            await status_msg.edit(f"🤷 <b>No results found</b> for <code>{phone_number}</code>.", parse_mode=ParseMode.HTML)
-            return
-
-        # Start building the formatted output message
-        response_text = f"✅ <b>Found {len(results)} result(s) for <code>{phone_number}</code>:</b>\n"
-        
-        for i, entry in enumerate(results, start=1):
-            # Use html.escape to safely display data, even if it contains < or >
-            name = html.escape(entry.get("name", "N/A"))
-            fname = html.escape(entry.get("fname", "N/A"))
-            # Replace '!' separators in the address with newlines for readability
-            address = html.escape(entry.get("address", "N/A")).replace("!", "\n")
-            circle = html.escape(entry.get("circle", "N/A"))
-            mobile = html.escape(entry.get("mobile", "N/A"))
-            
-            # Append each formatted result to the message
-            response_text += f"\n───────────────\n"
-            response_text += f"👤 <b>Result {i}:</b>\n"
-            response_text += f"┣ <b>Name:</b> <code>{name}</code>\n"
-            response_text += f"┣ <b>Father's Name:</b> <code>{fname}</code>\n"
-            response_text += f"┣ <b>Mobile:</b> <code>{mobile}</code>\n"
-            response_text += f"┣ <b>Circle:</b> <code>{circle}</code>\n"
-            response_text += f"┗ <b>Address:</b>\n<code>{address}</code>\n"
-
-        # Edit the original status message with the final formatted results
-        await status_msg.edit(response_text, parse_mode=ParseMode.HTML)
-
-    except Exception as e:
-        await status_msg.edit(f"❌ <b>Error formatting data:</b>\n<code>{html.escape(str(e))}</code>", parse_mode=ParseMode.HTML)
-
-
+# ── PHONE LOOKUP HANDLER (/ph) 
 
 @app.on_message(filters.text & ~filters.command(["start", "help", "ai", "create", "txqz", "htmk"]))
 async def handle_message(client, message: Message):
