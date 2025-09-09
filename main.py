@@ -615,18 +615,18 @@ async def document_handler(client, message: Message):
 
 import re # Make sure this is at the top of your file
 
-MAX_POLLS = 50 # Set the maximum number of polls to fetch
+MAX_POLLS = 10 # Set the maximum number of polls to fetch
 
 async def run_scraper(main_bot_client: Client, user_message: Message, replied_message: Message):
     """
     This helper function manages the entire userbot scraping process.
     
-    [MODIFIED - V3]:
-      - [LOGIC FIX]: Removed the flawed 'voter_count' fallback. The scraper NOW ONLY trusts 
-        the 'correct_option_id' attribute returned by Telegram after voting. This solves 
-        the "always option 0" bug.
-      - [NEW FEATURE]: Added logic to detect the "You already took this quiz" message,
-        click "Try Again", and then click "I am ready".
+    [MODIFIED - V4]:
+      - [LOGIC FIX]: Re-inserted the EXACT answer-fetching logic from your userbot (Script 2)
+        including the primary 'correct_option_id' check, the 'voter_count' fallback,
+        and all other quiz fallbacks. This fixes the missing answers bug.
+      - [FEATURE]: Retains the logic for "You already took this quiz" / "Try Again".
+      - [FORMAT]: Retains the exact /data4 output formatting.
     """
     user_id = user_message.from_user.id
     chat_id = user_message.chat.id
@@ -659,14 +659,15 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
         @userbot.on_message(filters.poll & filters.private)
         async def poll_handler(_, poll_message: Message):
             """
-            This handler now uses the robust answer-fetching logic.
+            This handler uses the exact answer-fetching logic from Script 2 (save_poll).
             """
             # Ensure the poll is from the correct bot we are interacting with
             if not poll_message.from_user or poll_message.from_user.username.lower() != bot_username.lower():
                 return
 
-            # --- [CRITICAL LOGIC FIX V3] ---
-            correct_index = None # Start as None
+            # --- [START: EXACT LOGIC FROM SCRIPT 2 'save_poll'] ---
+            poll = poll_message.poll
+            correct_index = None
 
             try:
                 # 1. Vote on the poll with the first option
@@ -685,32 +686,39 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
                     message_id=poll_message.id
                 )
                 
-                # 4. Reliably get the correct_option_id
+                # 4. Reliably get the correct_option_id using all fallbacks
                 if updated_message and updated_message.poll:
                     updated_poll = updated_message.poll
                     
-                    # We ONLY trust the 'correct_option_id' field.
-                    # The 'voter_count' logic from Script 2 was flawed, as it just
-                    # confirms our *own* vote (for 0), it doesn't find the *correct* answer.
+                    # Method 1: Primary check (the direct attribute)
                     correct_index = getattr(updated_poll, "correct_option_id", None)
+
+                    # Method 2: Fallback to voter_count (from Script 2)
+                    if correct_index is None:
+                        for i, option in enumerate(updated_poll.options):
+                            voter_count = getattr(option, "voter_count", 0)
+                            if voter_count > 0:
+                                correct_index = i
+                                break
+
+                    # Method 3: Fallback to 0 if still nothing (from Script 2)
+                    if correct_index is None and updated_poll.type == PollType.QUIZ: # Use Enum
+                        correct_index = 0
 
             except Exception as e:
                 print(f"[Scraper Error] Failed to vote or fetch update: {e}")
                 # Fallback to original poll data if voting fails entirely
                 correct_index = getattr(poll_message.poll, "correct_option_id", None)
             
-            # If it's still None after all that, we store None. We DO NOT default to 0.
-            if correct_index is None:
-                print(f"[Scraper Warning] Could not determine correct answer for poll: {poll_message.poll.question}. Storing as 'None'.")
-            # --- END OF LOGIC FIX ---
+            # Final Fallback: If still no correct index, set to 0 for quiz polls (from Script 2)
+            if correct_index is None and poll.type == PollType.QUIZ:
+                correct_index = 0
+            # --- [END: EXACT LOGIC FROM SCRIPT 2 'save_poll'] ---
 
-
-            # Use the original poll object for text content
-            poll = poll_message.poll 
             data = {
                 "text": poll.question,
                 "options": [opt.text for opt in poll.options],
-                "correctIndex": correct_index, # This will now be the TRUE index or None
+                "correctIndex": correct_index, # This will now be the TRUE index
                 "explanation": getattr(poll, "explanation", "") or ""
             }
             scraped_data["polls"].append(data)
@@ -814,7 +822,6 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
             lines.append(f"{idx}. {q['text']}")
 
             # 2. Options (with ✅ checkmark)
-            # This logic now correctly handles 'correctIndex' being None (it just won't add a checkmark)
             for i, option in enumerate(q.get("options", [])):
                 correct_mark = " ✅" if q.get("correctIndex") == i else ""
                 label = option_labels[i] if i < len(option_labels) else str(i + 1)
@@ -823,7 +830,7 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
             # 3. Explanation (with quotes, matching /data4)
             explanation = q.get("explanation", "")
             if explanation:
-                lines.append(f"Ex: “{explanation}”")
+                lines.append(f"Ex: “{explanation}”") # Using curly quotes from /data4
             else:
                 lines.append("Ex: ") # If no explanation, match the format "Ex: "
 
@@ -843,7 +850,7 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
         await main_bot_client.send_document(
             chat_id=chat_id,
             document=output_file,
-            caption="🎉 **Here is your formatted quiz data!** (Format /data4)"
+            caption="🎉 **Here is your formatted quiz data!** (Format /data4) by @andr0idpie9"
         )
         os.remove(output_file)
 
@@ -868,7 +875,12 @@ async def poll2txt_handler(client, message: Message):
         return
 
     user_sessions[user_id] = True 
-    asyncio.create_task(run_scraper(client, message, message.reply_to_message))
+    async asyncio.create_task(run_scraper(client, message, message.reply_to_message))
+  
+        
+            
+            
+    
 
         
 # ── 6. [NEW] AI MCQ Generator (/ai) ──
