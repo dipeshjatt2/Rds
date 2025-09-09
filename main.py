@@ -619,8 +619,13 @@ MAX_POLLS = 100 # Set the maximum number of polls to fetch
 
 async def run_scraper(main_bot_client: Client, user_message: Message, replied_message: Message):
     """
-    This helper function manages the entire userbot scraping process,
-    now updated with active poll answering to capture correct answers.
+    This helper function manages the entire userbot scraping process.
+    
+    [MODIFIED]: 
+      - Logic updated to match your 'userbot' (Script 2) reference.
+      - Increased wait time from 2s to 5s.
+      - Added fallback logic to check 'voter_count' if 'correct_option_id' is None.
+      - Output formatting updated to exactly match your '/data4' command request.
     """
     user_id = user_message.from_user.id
     chat_id = user_message.chat.id
@@ -653,53 +658,73 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
         @userbot.on_message(filters.poll & filters.private)
         async def poll_handler(_, poll_message: Message):
             """
-            This handler now actively votes on polls to determine the correct answer
-            before capturing the data.
+            This handler now uses the robust answer-fetching logic from your userbot script.
             """
             # Ensure the poll is from the correct bot we are interacting with
             if not poll_message.from_user or poll_message.from_user.username.lower() != bot_username.lower():
                 return
 
-            # --- NEW LOGIC TO ACTIVELY ANSWER POLLS ---
-            correct_index = 0 # Default to 0 as a fallback
+            # --- [NEW LOGIC] - Adapted from your reference script (Script 2) ---
+            correct_index = None # Start as None
+
             try:
-                # 1. Vote on the poll with the first option to trigger the result
+                # 1. Vote on the poll with the first option
                 await userbot.vote_poll(
                     chat_id=poll_message.chat.id,
                     message_id=poll_message.id,
-                    options=[0]
+                    options=[0] # Vote for option index 0
                 )
                 
-                # 2. Wait a moment for Telegram to process the vote and update the poll
-                await asyncio.sleep(2)
+                # 2. WAIT 5 SECONDS (Increased from 2s, matching Script 2)
+                await asyncio.sleep(5) 
                 
-                # 3. Re-fetch the message to get the updated poll object
+                # 3. Re-fetch the message to get the updated poll data
                 updated_message = await userbot.get_messages(
                     chat_id=poll_message.chat.id,
                     message_id=poll_message.id
                 )
                 
-                # 4. Reliably get the correct_option_id from the updated poll
+                # 4. Reliably get the correct_option_id
                 if updated_message and updated_message.poll:
-                    correct_index = updated_message.poll.correct_option_id
-                    if correct_index is None: # Fallback if still not available
-                        correct_index = 0
-            except Exception:
-                # If voting or fetching fails, we'll just use the fallback index
+                    updated_poll = updated_message.poll
+                    
+                    # Primary method: Get the ID directly (this is what Telegram fills after a quiz vote)
+                    correct_index = getattr(updated_poll, "correct_option_id", None)
+
+                    # [NEW FALLBACK] If still None, check voter counts (logic from Script 2)
+                    if correct_index is None:
+                        for i, option in enumerate(updated_poll.options):
+                            voter_count = getattr(option, "voter_count", 0)
+                            if voter_count > 0:
+                                # This assumes the correct answer will have our vote.
+                                correct_index = i
+                                break 
+
+                else:
+                    # If fetching the updated message failed, check the original poll (less reliable)
+                    correct_index = getattr(poll_message.poll, "correct_option_id", None)
+
+            except Exception as e:
+                print(f"[Scraper Error] Failed to vote or fetch update: {e}")
+                # Fallback to original poll data if voting fails entirely
+                correct_index = getattr(poll_message.poll, "correct_option_id", None)
+            
+            # Final fallback: If still None (e.g., a regular poll, not a quiz), default to 0.
+            if correct_index is None:
                 correct_index = 0
             # --- END OF NEW LOGIC ---
 
-            # Use the original poll object for text content, but the new correct_index
-            poll = poll_message.poll
+            # Use the original poll object for text content
+            poll = poll_message.poll 
             data = {
                 "text": poll.question,
                 "options": [opt.text for opt in poll.options],
-                "correctIndex": correct_index,
+                "correctIndex": correct_index, # Use the reliably-found index
                 "explanation": getattr(poll, "explanation", "") or ""
             }
             scraped_data["polls"].append(data)
             
-            # Update progress
+            # Update progress status
             try:
                 await status_msg.edit(f"📥 **Scraping in progress...**\n\nAnswered and collected **{len(scraped_data['polls'])}/{MAX_POLLS}** polls.")
             except: # Ignore errors if message is same
@@ -746,26 +771,40 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
             del user_sessions[user_id]
         await status_msg.edit(f"🛑 **Scraping Finished!**\n\nReason: {scraped_data.get('stop_reason', 'N/A')}\nTotal polls collected: {len(scraped_data['polls'])}\n\nFormatting data...")
 
-    # --- Format and Send Data ---
+    # --- [NEW] Format and Send Data (Matching /data4 format) ---
     if not scraped_data["polls"]:
         await status_msg.edit("🤷 No polls were collected. Nothing to send.")
         return
 
     try:
         lines = []
+        option_labels = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"] # Labels from /data4
+
         for idx, q in enumerate(scraped_data["polls"], start=1):
+            # 1. Question text
             lines.append(f"{idx}. {q['text']}")
-            options_text = [f"  ({chr(97 + i)}) {opt}" for i, opt in enumerate(q['options'])]
-            lines.extend(options_text)
+
+            # 2. Options (with ✅ checkmark)
+            for i, option in enumerate(q.get("options", [])):
+                correct_mark = " ✅" if q.get("correctIndex") == i else ""
+                label = option_labels[i] if i < len(option_labels) else str(i + 1)
+                lines.append(f"({label}) {option}{correct_mark}")
+
+            # 3. Explanation (with quotes, matching /data4)
+            explanation = q.get("explanation", "")
+            if explanation:
+                lines.append(f"Ex: “{explanation}”")
+            else:
+                lines.append("Ex: ") # If no explanation, match the format "Ex: "
+
+            # 4. Blank line after "Ex:"
+            lines.append("")
             
-            if q['correctIndex'] is not None and q['correctIndex'] < len(q['options']):
-                correct_char = chr(97 + q['correctIndex'])
-                lines.append(f"  Correct: ({correct_char})")
-            if q['explanation']:
-                lines.append(f"  Ex: {q['explanation']}")
+            # 5. Extra blank line (between questions)
             lines.append("")
 
-        content = "\n".join(lines)
+        content = "\n".join(lines).strip() # Use strip() to remove the trailing blank lines
+        
         output_file = f"quiz_data_{user_id}.txt"
         with open(output_file, "w", encoding="utf-8") as f:
             f.write(content)
@@ -774,7 +813,7 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
         await main_bot_client.send_document(
             chat_id=chat_id,
             document=output_file,
-            caption="🎉 **Here is your formatted quiz data!**"
+            caption="🎉 **Here is your formatted quiz data!** (Format /data4)"
         )
         os.remove(output_file)
 
@@ -787,6 +826,7 @@ async def poll2txt_handler(client, message: Message):
     """
     Initiates the poll scraping process.
     Usage: Reply to a quiz bot's 'Start' message with /poll2txt
+    (This function remains the same, but the 'run_scraper' it calls is now the new one.)
     """
     user_id = message.from_user.id
 
@@ -800,6 +840,7 @@ async def poll2txt_handler(client, message: Message):
 
     user_sessions[user_id] = True 
     asyncio.create_task(run_scraper(client, message, message.reply_to_message))
+
 
 # ── 6. [NEW] AI MCQ Generator (/ai) ──
 @app.on_message(filters.command("ai"))
