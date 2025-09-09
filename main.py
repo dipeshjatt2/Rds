@@ -875,14 +875,8 @@ async def poll2txt_handler(client, message: Message):
         return
 
     user_sessions[user_id] = True 
-    async asyncio.create_task(run_scraper(client, message, message.reply_to_message))
-  
-        
-            
-            
+    asyncio.create_task(run_scraper(client, message, message.reply_to_message))
     
-
-        
 # ── 6. [NEW] AI MCQ Generator (/ai) ──
 @app.on_message(filters.command("ai"))
 async def generate_ai_mcqs(client, message: Message):
