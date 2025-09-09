@@ -611,22 +611,17 @@ async def document_handler(client, message: Message):
 
 # ── 4. Main State Machine for Text Messages ──
 # ── 5. Poll Scraper (/poll2txt) ──
-
-
-import re # Make sure this is at the top of your file
-
 MAX_POLLS = 10 # Set the maximum number of polls to fetch
 
 async def run_scraper(main_bot_client: Client, user_message: Message, replied_message: Message):
     """
     This helper function manages the entire userbot scraping process.
     
-    [MODIFIED - V4]:
-      - [LOGIC FIX]: Re-inserted the EXACT answer-fetching logic from your userbot (Script 2)
-        including the primary 'correct_option_id' check, the 'voter_count' fallback,
-        and all other quiz fallbacks. This fixes the missing answers bug.
-      - [FEATURE]: Retains the logic for "You already took this quiz" / "Try Again".
-      - [FORMAT]: Retains the exact /data4 output formatting.
+    [MODIFIED - V5]:
+      - [LOGIC FIX]: Removed the internal username check inside poll_handler. The handler
+        will now process ANY poll received in the private chat with the bot, 
+        which fixes the issue of polls not being answered.
+      - All other logic (V4 answer fetching, "Try Again" feature, /data4 format) remains.
     """
     user_id = user_message.from_user.id
     chat_id = user_message.chat.id
@@ -661,9 +656,10 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
             """
             This handler uses the exact answer-fetching logic from Script 2 (save_poll).
             """
-            # Ensure the poll is from the correct bot we are interacting with
-            if not poll_message.from_user or poll_message.from_user.username.lower() != bot_username.lower():
-                return
+            # [FIX]: Removed the filter check. We will process ANY poll received in this
+            # private, temporary session, as it MUST be from the quiz bot.
+            # if not poll_message.from_user or poll_message.from_user.username.lower() != bot_username.lower():
+            #     return
 
             # --- [START: EXACT LOGIC FROM SCRIPT 2 'save_poll'] ---
             poll = poll_message.poll
@@ -850,7 +846,7 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
         await main_bot_client.send_document(
             chat_id=chat_id,
             document=output_file,
-            caption="🎉 **Here is your formatted quiz data!** (Format /data4) by @andr0idpie9"
+            caption="🎉 **Here is your formatted quiz data!** (Format /data4)"
         )
         os.remove(output_file)
 
@@ -862,7 +858,7 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
 async def poll2txt_handler(client, message: Message):
     """
     Initiates the poll scraping process.
-    Usage: Reply to a quiz bot's 'Start' message with /poll2txt
+    Usage: Reply to a quiz bot's 'Start message with /poll2txt
     """
     user_id = message.from_user.id
 
@@ -875,8 +871,9 @@ async def poll2txt_handler(client, message: Message):
         return
 
     user_sessions[user_id] = True 
+    # This line is now correct and contains no SyntaxError
     asyncio.create_task(run_scraper(client, message, message.reply_to_message))
-    
+
 # ── 6. [NEW] AI MCQ Generator (/ai) ──
 @app.on_message(filters.command("ai"))
 async def generate_ai_mcqs(client, message: Message):
