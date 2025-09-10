@@ -30,7 +30,7 @@ from pyrogram.errors import UserNotParticipant
 # --- Basic Bot Config ---
 API_ID = 22118129
 API_HASH = "43c66e3314921552d9330a4b05b18800"
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "7384767506:AAFUGMMw1ghKZlzBqQVo1trUTiRPLPWuCLI")
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
 # --- Userbot Config (for /poll2txt) ---
 SESSION_STRING = os.environ.get("SESSION_STRING")
