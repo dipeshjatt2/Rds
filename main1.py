@@ -585,12 +585,13 @@ async def verify_joined_handler(client, callback_query: CallbackQuery):
         # Re-trigger start handler to show the main menu
         await callback_query.message.delete()
         # Create a fake message object to pass to start_handler
-        fake_message = type('FakeMessage', (object,), {
-            'from_user': user, 
-            'command': ['start'],
-            'reply_text': callback_query.message.reply_text # Use the message's reply method
-        })
-        await start_handler(client, fake_message)
+        class FakeMessage:
+            def __init__(self, user, reply_method):
+                self.from_user = user
+                self.command = ['start']
+                self.reply_text = reply_method
+        
+        await start_handler(client, FakeMessage(user, callback_query.message.reply_text))
 
 # --- Points & Referral Callback Handlers ---
 
@@ -1011,7 +1012,13 @@ async def document_handler(client, message: Message):
 
 # --- Text Message Handler for state machine (/htmk flow) ---
 
-@app.on_message(filters.text & ~filters.command, group=2)
+@app.on_message(
+    filters.text & ~filters.command([
+        "start", "help", "redeem", "shufftxt", "htmk", "txqz",
+        "poll2txt", "ai", "arrange", "gen"
+    ]),
+    group=2
+)
 async def text_handler_for_flow(client, message: Message):
     uid = message.from_user.id
     if uid not in user_state:
