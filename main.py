@@ -24,7 +24,7 @@ SESSION_STRING = os.environ.get("SESSION_STRING") # ── CONFIG ──
 # --- [NEW] AI Configuration ---
 GEMINI_API_KEY = os.environ.get("aikey") # This is the line you requested
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent"
-STYLISH_SIGNATURE = "@andr0ipie9" # Stylish "by yourname"
+STYLISH_SIGNATURE = "@andr0idpie9" # Stylish "by yourname"
 
 
 # This HTML template file must be in the same directory as the bot script.
