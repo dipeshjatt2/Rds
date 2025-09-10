@@ -459,7 +459,7 @@ def create_main_menu_keyboard():
     keyboard = [
         [InlineKeyboardButton("🖇️ Referral Link", callback_data="referral_link")],
         [InlineKeyboardButton("🎁 Daily Bonus", callback_data="daily_bonus")],
-        [InlineKeyboardButton("💰 Buy Points", url="https://t.me/jioxt")]
+        [InlineKeyboardButton("💰 Buy Points", url="https://t.me/andr0idpie9")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
