@@ -1189,8 +1189,130 @@ Now, arrange the text above according to the specified format. Ensure every rule
         await status_msg.edit(f"❌ **An error occurred processing the output file:**\n`{str(e)}`")
 
 
+@app.on_message(filters.command("split"))
+async def split_handler(client, message: Message):
+    """
+    Splits a quiz file into multiple files with specified number of questions each.
+    Usage: Reply to a .txt file with /split [number]
+    """
+    # Check if user replied to a message with a file
+    if not message.reply_to_message or not message.reply_to_message.document:
+        await message.reply_text(
+            "⚠️ **Usage:** Please reply to a `.txt` or `.csv` file with the command `/split [number]`\n\n"
+            "**Example:** `/split 50` (will split into files with 50 questions each)"
+        )
+        return
+    
+    # Parse the split number
+    try:
+        command_parts = message.text.split()
+        if len(command_parts) < 2:
+            await message.reply_text("❌ Please specify the number of questions per file. Example: `/split 50`")
+            return
+        
+        questions_per_file = int(command_parts[1])
+        if questions_per_file <= 0:
+            await message.reply_text("❌ Number of questions per file must be greater than 0.")
+            return
+    except ValueError:
+        await message.reply_text("❌ Please provide a valid number. Example: `/split 50`")
+        return
+    
+    # Check file type
+    doc = message.reply_to_message.document
+    fname = (doc.file_name or "file").lower()
+    if not (fname.endswith(".txt") or fname.endswith(".csv")):
+        await message.reply_text("❌ Unsupported file type. Please use a `.txt` or `.csv` file.")
+        return
+    
+    status_msg = await message.reply_text(f"📥 Downloading and parsing file...")
+    
+    try:
+        # Download and parse the file
+        path = await message.reply_to_message.download()
+        
+        if fname.endswith(".csv"):
+            questions = parse_csv(path)
+        else:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                txt = f.read()
+            questions = detect_and_parse(txt)
+        
+        # Clean up downloaded file
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+        
+        if not questions:
+            await status_msg.edit("❌ Could not parse any questions from the file. Make sure the format is supported.")
+            return
+        
+        total_questions = len(questions)
+        if questions_per_file > total_questions:
+            await status_msg.edit(f"❌ The file only has {total_questions} questions, but you requested {questions_per_file} per file.")
+            return
+        
+        # Calculate number of files needed
+        num_files = (total_questions + questions_per_file - 1) // questions_per_file
+        
+        await status_msg.edit(f"✅ Parsed {total_questions} questions.\n\nSplitting into {num_files} files with {questions_per_file} questions each...")
+        
+        # Split questions into chunks
+        chunks = [questions[i:i + questions_per_file] for i in range(0, total_questions, questions_per_file)]
+        
+        # Process each chunk
+        for i, chunk in enumerate(chunks, start=1):
+            await status_msg.edit(f"📝 Processing file {i}/{num_files}...")
+            
+            # Format questions for output
+            out_lines = []
+            for j, q in enumerate(chunk, start=1):
+                qtext = q.get("text", "").replace("\r", "")
+                out_lines.append(f"{j}. {qtext}")
+                
+                for idx, opt in enumerate(q.get("options", [])):
+                    prefix = f"({chr(97 + idx)})"
+                    mark = " ✅" if idx == q.get("correctIndex", -1) else ""
+                    out_lines.append(f"{prefix} {opt}{mark}")
+                
+                if q.get("explanation"):
+                    out_lines.append(f"Ex: {q.get('explanation')}")
+                out_lines.append("")
+            
+            # Create file
+            final_txt = "\n".join(out_lines).strip()
+            file_obj = io.BytesIO(final_txt.encode("utf-8"))
+            
+            # Create filename
+            base_name = os.path.splitext(os.path.basename(fname))[0]
+            file_obj.name = f"{base_name}_part{i}_{len(chunk)}q.txt"
+            
+            # Send file with caption
+            caption = (
+                f"📁 Part {i} of {num_files}\n"
+                f"📊 Contains {len(chunk)} questions\n"
+                f"🔢 Total questions in file: {total_questions}\n"
+                f"👤 Requested by: {message.from_user.mention}\n"
+                f"#SplitQuiz"
+            )
+            
+            await message.reply_document(
+                file_obj,
+                caption=caption,
+                reply_to_message_id=message.reply_to_message_id
+            )
+            
+            # Small delay to avoid rate limits
+            await asyncio.sleep(1)
+        
+        await status_msg.edit(f"✅ Successfully split {total_questions} questions into {num_files} files!")
+        
+    except Exception as e:
+        await status_msg.edit(f"❌ An error occurred while processing the file: {e}")
+
 @app.on_message(filters.text & ~filters.command([
-    "start", "help", "create", "txqz", "htmk", "poll2txt", "shufftxt", 
+    "start", "help", "create", "txqz", "htmk", "poll2txt", "shufftxt", "split", 
     "ph", "ai", "arrange"
 ]))
 
