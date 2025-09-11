@@ -1189,15 +1189,11 @@ Now, arrange the text above according to the specified format. Ensure every rule
         await status_msg.edit(f"❌ **An error occurred processing the output file:**\n`{str(e)}`")
 
 
-@app.on_message(filters.text & ~filters.command(["start", "help", "ai", "create", "txqz", "htmk", "arrange", "poll2txt", "shufftxt"])) # Add "arrange" to the ignore list
-async def handle_message(client, message: Message):
-    uid = message.from_user.id
-    # ... (rest of your handle_message function)
- # <-- Make sure this import is at the top of your script with the others!
+@app.on_message(filters.text & ~filters.command([
+    "start", "help", "create", "txqz", "htmk", "poll2txt", "shufftxt", 
+    "ph", "ai", "arrange"
+]))
 
-# ── PHONE LOOKUP HANDLER (/ph) 
-
-@app.on_message(filters.text & ~filters.command(["start", "help", "ai", "create", "txqz", "htmk"]))
 async def handle_message(client, message: Message):
     uid = message.from_user.id
     if uid not in user_state:
