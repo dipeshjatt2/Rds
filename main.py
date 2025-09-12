@@ -441,7 +441,7 @@ async def start_handler(_, message: Message):
         "🔹 **/create** - Create a single quiz poll manually.\n\n"
         
         "──────────────────────────\n"
-        "🧑‍💻 **Developer:** @andr0ipie9"
+        "🧑‍💻 **Developer:** @andr0idpie9"
     )
 
 # ── 1. Manual Quiz Creation (/create) ──
