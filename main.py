@@ -176,7 +176,7 @@ async def phone_lookup_handler(client, message: Message):
     status_msg = await message.reply_text(f"🔍 <b>Searching details for:</b> <code>{phone_number}</code>...", parse_mode=ParseMode.HTML)
 
     # 2. Define API details and make the request
-    API_URL = "https://e1e63696f2d5.ngrok-free.app/index.cpp"
+    API_URL = "https://osint.stormx.pw/index.cpp"
     PARAMS = {
         "key": "dark",
         "number": phone_number
