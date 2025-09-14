@@ -9,9 +9,9 @@ import random
 import time
 import csv
 from pyrogram import Client, filters
-from pyrogram.types import Message
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram.enums import ParseMode, PollType
-
+from pyrogram.errors import UserNotParticipant
 # ── CONFIG ──
 # Using configuration from the first bot, as requested.
 API_ID = 22118129
@@ -20,7 +20,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 SESSION_STRING = os.environ.get("SESSION_STRING") # ── CONFIG ──
 # ... (your existing API_ID, API_HASH, BOT_TOKEN, etc.) ...
 
-
+FORCE_SUB_CHANNEL = -1002916152861
 # --- [NEW] AI Configuration ---
 GEMINI_API_KEY = os.environ.get("aikey") # This is the line you requested
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
@@ -416,9 +416,51 @@ def replace_questions_in_template(html: str, questions, minutes:int, negative:fl
 
 
 # ─── BOT HANDLERS ───
-
 @app.on_message(filters.command(["start", "help"]))
-async def start_handler(_, message: Message):
+async def start_handler(client, message: Message):
+    # --- Force Subscribe Logic ---
+    try:
+        # Get the user's membership status in the channel
+        await client.get_chat_member(chat_id=FORCE_SUB_CHANNEL, user_id=message.from_user.id)
+    except UserNotParticipant:
+        # If the user is not a member, send the join message
+        channel_username = str(FORCE_SUB_CHANNEL)
+        if isinstance(FORCE_SUB_CHANNEL, int): # For private channels, create an invite link if possible
+             try:
+                invite_link = await client.create_chat_invite_link(FORCE_SUB_CHANNEL, member_limit=1)
+                join_url = invite_link.invite_link
+             except:
+                # Fallback if bot can't create link
+                # You can manually create a permanent invite link and paste it here
+                join_url = "https://t.me/+jkENXw79VEU5MDg1" 
+        else: # For public channels
+            join_url = "https://t.me/+jkENXw79VEU5MDg1"
+
+        buttons = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("🚀 Join Channel", url=join_url)
+                ],
+                [
+                    InlineKeyboardButton("✅ Verify Join", callback_data="check_join")
+                ]
+            ]
+        )
+        await message.reply_text(
+            "👋 **Welcome!**\n\n"
+            "To use this bot, you must first join our channel. "
+            "This helps us keep the service running.\n\n"
+            "Click the button below to join, then click 'Verify Join'.",
+            reply_markup=buttons
+        )
+        return # Stop further execution
+    except Exception as e:
+        # Handle other potential errors, like if the bot is not an admin in the channel
+        print(f"Error checking membership: {e}")
+        await message.reply_text("An error occurred. Please try again later.")
+        return
+
+    # --- Original Start Message (if user is already a member) ---
     await message.reply_text(
          "👋 **Welcome!**\n\n"
         "Here's what I can do:\n\n"
@@ -443,6 +485,36 @@ async def start_handler(_, message: Message):
         "──────────────────────────\n"
         "🧑‍💻 **Developer:** @andr0idpie9"
     )
+
+# dr
+@app.on_callback_query(filters.regex("check_join"))
+async def check_join_handler(client, callback_query):
+    """
+    Handles the 'Verify Join' button click.
+    """
+    try:
+        # Check if the user is now a member
+        await client.get_chat_member(chat_id=FORCE_SUB_CHANNEL, user_id=callback_query.from_user.id)
+        
+        # If they are a member, delete the "please join" message
+        await callback_query.message.delete()
+        
+        # Then send the actual welcome message (same as in /start)
+        await start_handler(client, callback_query.message) # Re-run the start command logic
+        
+        # Answer the callback query to remove the "loading" animation
+        await callback_query.answer()
+
+    except UserNotParticipant:
+        # If they are still not a member, show an alert
+        await callback_query.answer(
+            "You haven't joined the channel yet. Please join and then click 'Verify Join'.",
+            show_alert=True
+        )
+    except Exception as e:
+        print(f"Error in check_join_handler: {e}")
+        await callback_query.answer("An unexpected error occurred.", show_alert=True)
+
 
 # ── 1. Manual Quiz Creation (/create) ──
 
