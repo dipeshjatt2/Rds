@@ -879,10 +879,6 @@ async def poll2txt_handler(client, message: Message):
     asyncio.create_task(run_scraper(client, message, message.reply_to_message))
 
 #ocr
-# ── [NEW] OCR Handler (/ocr) ──
-import convertapi
-import time # Make sure 'time' is imported at the top of your file
-
 @app.on_message(filters.command("ocr"))
 async def ocr_handler(client, message: Message):
     """
@@ -904,9 +900,15 @@ async def ocr_handler(client, message: Message):
         return
 
     doc = target_msg.document
-    if not doc.file_name or not doc.file_name.lower().endswith(".pdf"):
+    
+    # ▼▼▼ FIX STARTS HERE ▼▼▼
+    # Provide a default filename if the document doesn't have one
+    file_name = doc.file_name if doc.file_name else "input.pdf"
+    
+    if not file_name.lower().endswith(".pdf"):
         await message.reply_text("❌ Unsupported file type. Please reply to a **PDF** file.")
         return
+    # ▲▲▲ FIX ENDS HERE ▲▲▲
 
     # --- 3. Check File Size (2MB limit) ---
     if doc.file_size > 2 * 1024 * 1024:
@@ -915,35 +917,30 @@ async def ocr_handler(client, message: Message):
 
     status_msg = await message.reply_text("📥 Downloading PDF, please wait...")
 
-    # Create a unique temporary directory for this specific request
     output_dir = f"./temp_{message.from_user.id}_{int(time.time())}/"
     download_path = None
 
     try:
         # --- 4. Download the file ---
         os.makedirs(output_dir, exist_ok=True)
-        download_path = await target_msg.download(file_name=os.path.join(output_dir, doc.file_name))
+        # ▼▼▼ FIX: Use the new 'file_name' variable instead of 'doc.file_name'
+        download_path = await target_msg.download(file_name=os.path.join(output_dir, file_name))
         await status_msg.edit("🤖 **Processing OCR...**\nThis may take up to 10 minutes. Please be patient.")
 
         # --- 5. Run the synchronous API call in a separate thread to avoid blocking ---
         def run_conversion():
-            # Set the API secret for this specific conversion thread
             convertapi.api_secret = CONVERTAPI_SECRET
             result = convertapi.convert('txt', {
                 'File': download_path
             }, from_format = 'pdf')
             
-            # Save the converted file(s) to our unique directory
             saved_files = result.save_files(output_dir)
-            
-            # Return the path of the first generated .txt file
             return saved_files[0] if saved_files else None
 
         loop = asyncio.get_running_loop()
-        # Wait for the conversion to finish, with a 10-minute timeout
         output_txt_path = await asyncio.wait_for(
             loop.run_in_executor(None, run_conversion),
-            timeout=600  # 10 minutes
+            timeout=6000
         )
 
         if not output_txt_path or not os.path.exists(output_txt_path):
@@ -971,6 +968,7 @@ async def ocr_handler(client, message: Message):
                 os.rmdir(output_dir)
             except Exception as cleanup_error:
                 print(f"Error during cleanup: {cleanup_error}")
+
 
 # ── 6. [NEW] AI MCQ Generator (/ai) ──
 @app.on_message(filters.command("ai"))
