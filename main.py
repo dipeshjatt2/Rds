@@ -1408,7 +1408,7 @@ async def split_handler(client, message: Message):
 
 @app.on_message(filters.text & ~filters.command([
     "start", "help", "create", "txqz", "htmk", "poll2txt", "shufftxt", "split", 
-    "ph", "ai", "arrange"
+    "ph", "ai", "ocr", "arrange"
 ]))
 
 async def handle_message(client, message: Message):
