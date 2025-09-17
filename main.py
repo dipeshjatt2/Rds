@@ -1,3 +1,4 @@
+import convertapi
 import html
 import asyncio
 import json
@@ -878,6 +879,100 @@ async def poll2txt_handler(client, message: Message):
     user_sessions[user_id] = True 
     # This line is correct and contains no SyntaxError
     asyncio.create_task(run_scraper(client, message, message.reply_to_message))
+
+#ocr
+# ── [NEW] OCR Handler (/ocr) ──
+import convertapi
+import time # Make sure 'time' is imported at the top of your file
+
+@app.on_message(filters.command("ocr"))
+async def ocr_handler(client, message: Message):
+    """
+    Performs OCR on a replied PDF file using ConvertAPI.
+    Usage: Reply to a PDF file with /ocr
+    """
+    # --- 1. Get API Key from environment variables ---
+    CONVERTAPI_SECRET = os.environ.get("CONVERTAPI_SECRET")
+    if not CONVERTAPI_SECRET:
+        await message.reply_text("❌ **OCR Error:** `CONVERTAPI_SECRET` is not configured by the bot owner.")
+        return
+
+    # --- 2. Validate that the user replied to a PDF document ---
+    target_msg = message.reply_to_message
+    if not target_msg or not target_msg.document:
+        await message.reply_text(
+            "⚠️ **Usage:** Please reply to a PDF file (`.pdf`) with the command `/ocr`."
+        )
+        return
+
+    doc = target_msg.document
+    if not doc.file_name or not doc.file_name.lower().endswith(".pdf"):
+        await message.reply_text("❌ Unsupported file type. Please reply to a **PDF** file.")
+        return
+
+    # --- 3. Check File Size (2MB limit) ---
+    if doc.file_size > 2 * 1024 * 1024:
+        await message.reply_text("❌ **File Too Large:** The PDF file must be under 2 MB.")
+        return
+
+    status_msg = await message.reply_text("📥 Downloading PDF, please wait...")
+
+    # Create a unique temporary directory for this specific request
+    output_dir = f"./temp_{message.from_user.id}_{int(time.time())}/"
+    download_path = None
+
+    try:
+        # --- 4. Download the file ---
+        os.makedirs(output_dir, exist_ok=True)
+        download_path = await target_msg.download(file_name=os.path.join(output_dir, doc.file_name))
+        await status_msg.edit("🤖 **Processing OCR...**\nThis may take up to 10 minutes. Please be patient.")
+
+        # --- 5. Run the synchronous API call in a separate thread to avoid blocking ---
+        def run_conversion():
+            # Set the API secret for this specific conversion thread
+            convertapi.api_secret = CONVERTAPI_SECRET
+            result = convertapi.convert('txt', {
+                'File': download_path
+            }, from_format = 'pdf')
+            
+            # Save the converted file(s) to our unique directory
+            saved_files = result.save_files(output_dir)
+            
+            # Return the path of the first generated .txt file
+            return saved_files[0] if saved_files else None
+
+        loop = asyncio.get_running_loop()
+        # Wait for the conversion to finish, with a 10-minute timeout
+        output_txt_path = await asyncio.wait_for(
+            loop.run_in_executor(None, run_conversion),
+            timeout=600  # 10 minutes
+        )
+
+        if not output_txt_path or not os.path.exists(output_txt_path):
+             await status_msg.edit("❌ **OCR Failed:** The API did not return a valid text file.")
+             return
+
+        # --- 6. Send the resulting .txt file ---
+        await message.reply_document(
+            document=output_txt_path,
+            caption="✅ Here is the extracted text from your PDF."
+        )
+        await status_msg.delete()
+
+    except asyncio.TimeoutError:
+        await status_msg.edit("❌ **Request Timed Out:** The OCR process took longer than 10 minutes and was canceled.")
+    except Exception as e:
+        error_message = str(e)
+        await status_msg.edit(f"❌ **An unexpected error occurred:**\n`{error_message}`")
+    finally:
+        # --- 7. Clean up all temporary files and the directory ---
+        if os.path.exists(output_dir):
+            try:
+                for file_in_dir in os.listdir(output_dir):
+                    os.remove(os.path.join(output_dir, file_in_dir))
+                os.rmdir(output_dir)
+            except Exception as cleanup_error:
+                print(f"Error during cleanup: {cleanup_error}")
 
 # ── 6. [NEW] AI MCQ Generator (/ai) ──
 @app.on_message(filters.command("ai"))
