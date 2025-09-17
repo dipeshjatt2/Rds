@@ -883,10 +883,11 @@ async def poll2txt_handler(client, message: Message):
 @app.on_message(filters.command("ocr"))
 async def ocr_handler(client, message: Message):
     """
-    Converts PDF to text using ConvertAPI.
+    Converts PDF to text using ConvertAPI (direct HTTP approach).
     Usage: Reply to a PDF file with /ocr
     """
     # Check if ConvertAPI is configured
+    CONVERTAPI_TOKEN = os.environ.get("CONVERTAPI_TOKEN")
     if not CONVERTAPI_TOKEN:
         await message.reply_text("❌ **OCR Error:** `CONVERTAPI_TOKEN` is not configured by the bot owner.")
         return
@@ -910,40 +911,48 @@ async def ocr_handler(client, message: Message):
 
     status_msg = await message.reply_text("📥 Downloading PDF file...")
     pdf_path = None
-    output_path = None
 
     try:
-        # Set API credentials
-        convertapi.api_secret = CONVERTAPI_TOKEN
-
         # Download the PDF file
         pdf_path = await message.reply_to_message.download()
         
         await status_msg.edit("🔍 Converting PDF to text... (This may take a few minutes)")
 
-        # Convert PDF to text with timeout
-        try:
-            # Use asyncio.to_thread to run the blocking convertapi call in a separate thread
-            result = await asyncio.wait_for(
-                asyncio.to_thread(
-                    lambda: convertapi.convert('txt', {'File': pdf_path}, from_format='pdf')
-                ),
-                timeout=600  # 10 minute timeout
-            )
-        except asyncio.TimeoutError:
-            await status_msg.edit("❌ **Conversion Timeout:** The conversion took too long (over 10 minutes).")
-            return
-        except Exception as conv_error:
-            await status_msg.edit(f"❌ **Conversion Error:** {str(conv_error)}")
-            return
+        # Read the PDF file as bytes
+        with open(pdf_path, "rb") as f:
+            pdf_data = f.read()
 
-        # Save the result to a temporary file
-        output_path = f"{pdf_path}.txt"
-        result.save_files(output_path)
+        # Prepare the request to ConvertAPI
+        url = "https://v2.convertapi.com/convert/pdf/to/txt"
+        params = {
+            "Secret": CONVERTAPI_TOKEN,
+            "StoreFile": "true"
+        }
 
-        # Read the converted text
-        with open(output_path, "r", encoding="utf-8", errors="ignore") as f:
-            text_content = f.read()
+        files = {
+            "File": (os.path.basename(pdf_path), pdf_data, "application/pdf")
+        }
+
+        # Send the conversion request with timeout
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, params=params, data=files, timeout=600) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    raise Exception(f"API returned status {response.status}: {error_text}")
+                
+                result = await response.json()
+                
+                # Check if conversion was successful
+                if not result.get("Files"):
+                    raise Exception("No output file received from conversion API")
+                
+                # Download the converted text file
+                output_url = result["Files"][0]["Url"]
+                async with session.get(output_url) as txt_response:
+                    if txt_response.status != 200:
+                        raise Exception(f"Failed to download converted file: {txt_response.status}")
+                    
+                    text_content = await txt_response.text()
 
         if not text_content.strip():
             await status_msg.edit("❌ The converted text appears to be empty. The PDF might be image-based or protected.")
@@ -960,24 +969,21 @@ async def ocr_handler(client, message: Message):
         )
         await status_msg.delete()
 
+    except asyncio.TimeoutError:
+        await status_msg.edit("❌ **Conversion Timeout:** The conversion took too long (over 10 minutes).")
+    except aiohttp.ClientError as e:
+        await status_msg.edit(f"❌ **Network Error:** {str(e)}")
     except Exception as e:
         error_msg = str(e) if e else "Unknown error occurred"
-        if "invalid" in error_msg.lower() or "credentials" in error_msg.lower():
-            await status_msg.edit("❌ **API Error:** Invalid ConvertAPI credentials. Please check the configuration.")
-        elif "timeout" in error_msg.lower():
-            await status_msg.edit("❌ **Conversion Timeout:** The conversion took too long.")
-        else:
-            await status_msg.edit(f"❌ **Conversion Failed:** {error_msg}")
+        await status_msg.edit(f"❌ **Conversion Failed:** {error_msg}")
         
     finally:
-        # Clean up any temporary files
+        # Clean up temporary files
         try:
             if pdf_path and os.path.exists(pdf_path):
                 os.remove(pdf_path)
-            if output_path and os.path.exists(output_path):
-                os.remove(output_path)
-        except Exception as cleanup_error:
-            print(f"Cleanup error: {cleanup_error}")
+        except Exception:
+            pass
 # ── 6. [NEW] AI MCQ Generator (/ai) ──
 @app.on_message(filters.command("ai"))
 async def generate_ai_mcqs(client, message: Message):
