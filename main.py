@@ -20,6 +20,7 @@ API_HASH = "43c66e3314921552d9330a4b05b18800"
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 SESSION_STRING = os.environ.get("SESSION_STRING") # ── CONFIG ──
 # ... (your existing API_ID, API_HASH, BOT_TOKEN, etc.) ...
+CONVERTAPI_TOKEN = os.environ.get("CONVERTAPI_SECRET")
 # --- [NEW] AI Configuration ---
 GEMINI_API_KEY = os.environ.get("aikey") # This is the line you requested
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
@@ -882,92 +883,105 @@ async def poll2txt_handler(client, message: Message):
 @app.on_message(filters.command("ocr"))
 async def ocr_handler(client, message: Message):
     """
-    Performs OCR on a replied PDF file using ConvertAPI.
+    Converts PDF to text using ConvertAPI.
     Usage: Reply to a PDF file with /ocr
     """
-    # --- 1. Get API Key from environment variables ---
-    CONVERTAPI_SECRET = os.environ.get("CONVERTAPI_SECRET")
-    if not CONVERTAPI_SECRET:
-        await message.reply_text("❌ **OCR Error:** `CONVERTAPI_SECRET` is not configured by the bot owner.")
+    # Check if ConvertAPI is configured
+    if not CONVERTAPI_TOKEN:
+        await message.reply_text("❌ **OCR Error:** `CONVERTAPI_TOKEN` is not configured by the bot owner.")
         return
 
-    # --- 2. Validate that the user replied to a PDF document ---
-    target_msg = message.reply_to_message
-    if not target_msg or not target_msg.document:
-        await message.reply_text(
-            "⚠️ **Usage:** Please reply to a PDF file (`.pdf`) with the command `/ocr`."
-        )
+    # Check if user replied to a message with a PDF
+    if not message.reply_to_message or not message.reply_to_message.document:
+        await message.reply_text("⚠️ **Usage:** Please reply to a PDF file with the command `/ocr`.")
         return
 
-    doc = target_msg.document
+    # Check file type and size
+    doc = message.reply_to_message.document
+    fname = (doc.file_name or "file.pdf").lower()
     
-    # ▼▼▼ FIX STARTS HERE ▼▼▼
-    # Provide a default filename if the document doesn't have one
-    file_name = doc.file_name if doc.file_name else "input.pdf"
+    if not fname.endswith(".pdf"):
+        await message.reply_text("❌ Unsupported file type. Please reply to a PDF file.")
+        return
     
-    if not file_name.lower().endswith(".pdf"):
-        await message.reply_text("❌ Unsupported file type. Please reply to a **PDF** file.")
-        return
-    # ▲▲▲ FIX ENDS HERE ▲▲▲
-
-    # --- 3. Check File Size (2MB limit) ---
-    if doc.file_size > 2 * 1024 * 1024:
-        await message.reply_text("❌ **File Too Large:** The PDF file must be under 2 MB.")
+    if doc.file_size > 2 * 1024 * 1024:  # 2MB limit
+        await message.reply_text("❌ **File Too Large:** The PDF must be under 2MB.")
         return
 
-    status_msg = await message.reply_text("📥 Downloading PDF, please wait...")
-
-    output_dir = f"./temp_{message.from_user.id}_{int(time.time())}/"
-    download_path = None
+    status_msg = await message.reply_text("📥 Downloading PDF file...")
 
     try:
-        # --- 4. Download the file ---
-        os.makedirs(output_dir, exist_ok=True)
-        # ▼▼▼ FIX: Use the new 'file_name' variable instead of 'doc.file_name'
-        download_path = await target_msg.download(file_name=os.path.join(output_dir, file_name))
-        await status_msg.edit("🤖 **Processing OCR...**\nThis may take up to 10 minutes. Please be patient.")
+        # Set API credentials
+        convertapi.api_secret = CONVERTAPI_TOKEN
 
-        # --- 5. Run the synchronous API call in a separate thread to avoid blocking ---
-        def run_conversion():
-            convertapi.api_secret = CONVERTAPI_SECRET
-            result = convertapi.convert('txt', {
-                'File': download_path
-            }, from_format = 'pdf')
-            
-            saved_files = result.save_files(output_dir)
-            return saved_files[0] if saved_files else None
+        # Download the PDF file
+        pdf_path = await message.reply_to_message.download()
+        
+        await status_msg.edit("🔍 Converting PDF to text... (This may take a few minutes)")
 
-        loop = asyncio.get_running_loop()
-        output_txt_path = await asyncio.wait_for(
-            loop.run_in_executor(None, run_conversion),
-            timeout=6000
-        )
+        # Convert PDF to text with timeout
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    convertapi.convert, 'txt', {'File': pdf_path}, from_format='pdf'
+                ),
+                timeout=600  # 10 minute timeout
+            )
+        except asyncio.TimeoutError:
+            await status_msg.edit("❌ **Conversion Timeout:** The conversion took too long (over 10 minutes).")
+            try:
+                os.remove(pdf_path)
+            except:
+                pass
+            return
 
-        if not output_txt_path or not os.path.exists(output_txt_path):
-             await status_msg.edit("❌ **OCR Failed:** The API did not return a valid text file.")
-             return
+        # Save the result to a temporary file
+        output_path = f"{pdf_path}.txt"
+        result.save_files(output_path)
 
-        # --- 6. Send the resulting .txt file ---
+        # Read the converted text
+        with open(output_path, "r", encoding="utf-8", errors="ignore") as f:
+            text_content = f.read()
+
+        # Clean up temporary files
+        try:
+            os.remove(pdf_path)
+            os.remove(output_path)
+        except:
+            pass
+
+        if not text_content.strip():
+            await status_msg.edit("❌ The converted text appears to be empty. The PDF might be image-based or protected.")
+            return
+
+        # Create and send the text file
+        file_obj = io.BytesIO(text_content.encode("utf-8"))
+        base_name = os.path.splitext(os.path.basename(fname))[0]
+        file_obj.name = f"{base_name}_converted.txt"
+
         await message.reply_document(
-            document=output_txt_path,
-            caption="✅ Here is the extracted text from your PDF."
+            document=file_obj,
+            caption="✅ PDF successfully converted to text!"
         )
         await status_msg.delete()
 
-    except asyncio.TimeoutError:
-        await status_msg.edit("❌ **Request Timed Out:** The OCR process took longer than 10 minutes and was canceled.")
     except Exception as e:
-        error_message = str(e)
-        await status_msg.edit(f"❌ **An unexpected error occurred:**\n`{error_message}`")
-    finally:
-        # --- 7. Clean up all temporary files and the directory ---
-        if os.path.exists(output_dir):
-            try:
-                for file_in_dir in os.listdir(output_dir):
-                    os.remove(os.path.join(output_dir, file_in_dir))
-                os.rmdir(output_dir)
-            except Exception as cleanup_error:
-                print(f"Error during cleanup: {cleanup_error}")
+        error_msg = str(e)
+        if "invalid" in error_msg.lower() or "credentials" in error_msg.lower():
+            await status_msg.edit("❌ **API Error:** Invalid ConvertAPI credentials. Please check the configuration.")
+        elif "timeout" in error_msg.lower():
+            await status_msg.edit("❌ **Conversion Timeout:** The conversion took too long.")
+        else:
+            await status_msg.edit(f"❌ **Conversion Failed:** {error_msg}")
+        
+        # Clean up any temporary files
+        try:
+            if 'pdf_path' in locals() and os.path.exists(pdf_path):
+                os.remove(pdf_path)
+            if 'output_path' in locals() and os.path.exists(output_path):
+                os.remove(output_path)
+        except:
+            pass
 
 
 # ── 6. [NEW] AI MCQ Generator (/ai) ──
