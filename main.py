@@ -909,6 +909,8 @@ async def ocr_handler(client, message: Message):
         return
 
     status_msg = await message.reply_text("📥 Downloading PDF file...")
+    pdf_path = None
+    output_path = None
 
     try:
         # Set API credentials
@@ -921,18 +923,18 @@ async def ocr_handler(client, message: Message):
 
         # Convert PDF to text with timeout
         try:
+            # Use asyncio.to_thread to run the blocking convertapi call in a separate thread
             result = await asyncio.wait_for(
                 asyncio.to_thread(
-                    convertapi.convert, 'txt', {'File': pdf_path}, from_format='pdf'
+                    lambda: convertapi.convert('txt', {'File': pdf_path}, from_format='pdf')
                 ),
                 timeout=600  # 10 minute timeout
             )
         except asyncio.TimeoutError:
             await status_msg.edit("❌ **Conversion Timeout:** The conversion took too long (over 10 minutes).")
-            try:
-                os.remove(pdf_path)
-            except:
-                pass
+            return
+        except Exception as conv_error:
+            await status_msg.edit(f"❌ **Conversion Error:** {str(conv_error)}")
             return
 
         # Save the result to a temporary file
@@ -942,13 +944,6 @@ async def ocr_handler(client, message: Message):
         # Read the converted text
         with open(output_path, "r", encoding="utf-8", errors="ignore") as f:
             text_content = f.read()
-
-        # Clean up temporary files
-        try:
-            os.remove(pdf_path)
-            os.remove(output_path)
-        except:
-            pass
 
         if not text_content.strip():
             await status_msg.edit("❌ The converted text appears to be empty. The PDF might be image-based or protected.")
@@ -966,7 +961,7 @@ async def ocr_handler(client, message: Message):
         await status_msg.delete()
 
     except Exception as e:
-        error_msg = str(e)
+        error_msg = str(e) if e else "Unknown error occurred"
         if "invalid" in error_msg.lower() or "credentials" in error_msg.lower():
             await status_msg.edit("❌ **API Error:** Invalid ConvertAPI credentials. Please check the configuration.")
         elif "timeout" in error_msg.lower():
@@ -974,16 +969,15 @@ async def ocr_handler(client, message: Message):
         else:
             await status_msg.edit(f"❌ **Conversion Failed:** {error_msg}")
         
+    finally:
         # Clean up any temporary files
         try:
-            if 'pdf_path' in locals() and os.path.exists(pdf_path):
+            if pdf_path and os.path.exists(pdf_path):
                 os.remove(pdf_path)
-            if 'output_path' in locals() and os.path.exists(output_path):
+            if output_path and os.path.exists(output_path):
                 os.remove(output_path)
-        except:
-            pass
-
-
+        except Exception as cleanup_error:
+            print(f"Cleanup error: {cleanup_error}")
 # ── 6. [NEW] AI MCQ Generator (/ai) ──
 @app.on_message(filters.command("ai"))
 async def generate_ai_mcqs(client, message: Message):
