@@ -887,8 +887,7 @@ async def ocr_handler(client, message: Message):
     Usage: Reply to a PDF file with /ocr
     """
     try:
-        # Check if ConvertAPI is configured
-        CONVERTAPI_TOKEN = os.environ.get("CONVERTAPI_TOKEN")
+        # Check if ConvertAPI is configured        
         if not CONVERTAPI_TOKEN:
             await message.reply_text("❌ **OCR Error:** CONVERTAPI_TOKEN is not configured.")
             return
