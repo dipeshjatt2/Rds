@@ -20,7 +20,7 @@ API_HASH = "43c66e3314921552d9330a4b05b18800"
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 SESSION_STRING = os.environ.get("SESSION_STRING") # ── CONFIG ──
 # ... (your existing API_ID, API_HASH, BOT_TOKEN, etc.) ...
-
+CONVERTAPI_SECRET = os.environ.get("ocrapi")
 
 # --- [NEW] AI Configuration ---
 GEMINI_API_KEY = os.environ.get("aikey") # This is the line you requested
