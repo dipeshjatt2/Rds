@@ -26,7 +26,7 @@ CONVERTAPI_TOKEN = os.environ.get("CONVERTAPI_SECRET")
 GEMINI_API_KEY = os.environ.get("aikey") # This is the line you requested
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
 STYLISH_SIGNATURE = "@andr0idpie9" # Stylish "by yourname"
-
+BOT_START_TIME = datetime.now()
 
 # This HTML template file must be in the same directory as the bot script.
 TEMPLATE_HTML = "format2.html"
