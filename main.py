@@ -1,3 +1,4 @@
+import psutil
 import convertapi
 import html
 import asyncio
@@ -148,7 +149,61 @@ async def shufftxt_handler(client, message: Message):
 
 #dg
  # <-- Make sure this import is at the top of your script with the others!
+@app.on_message(filters.command("ping"))
+async def ping_handler(client, message: Message):
+    """
+    Shows the bot's and system's current status.
+    """
+    import time, platform, psutil
+    from datetime import datetime
 
+    # --- Start timing for ping calculation ---
+    start_time = time.time()
+    status_msg = await message.reply_text("Pinging...")
+    end_time = time.time()
+    ping = f"{(end_time - start_time) * 1000:.2f}ms"
+
+    # --- Get System Information ---
+    system = f"{platform.system()} {platform.release()}"
+    architecture = f"{platform.architecture()[0]}"
+    
+    # --- Get Resource Usage ---
+    cpu_usage = f"{psutil.cpu_percent(interval=0.5)}%"
+    
+    # RAM
+    ram = psutil.virtual_memory()
+    ram_used_gb = ram.used / (1024**3)
+    ram_total_gb = ram.total / (1024**3)
+    ram_usage = f"{ram_used_gb:.2f}GB / {ram_total_gb:.2f}GB ({ram.percent}%)"
+
+    # Disk
+    disk = psutil.disk_usage('/')
+    disk_used_gb = disk.used / (1024**3)
+    disk_total_gb = disk.total / (1024**3)
+    disk_usage = f"{disk_used_gb:.2f}GB / {disk_total_gb:.2f}GB ({disk.percent}%)"
+    
+    # --- Get Time & Uptime ---
+    uptime = str(datetime.now() - BOT_START_TIME).split('.')[0] # Removes microseconds
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # --- Prepare the final message (plain text) ---
+    response_text = f"""System Status
+-----------------------
+Ping         : {ping}
+System       : {system}
+Architecture : {architecture}
+-----------------------
+CPU Usage    : {cpu_usage}
+RAM Usage    : {ram_usage}
+Disk Usage   : {disk_usage}
+-----------------------
+Uptime       : {uptime}
+Time         : {current_time}
+-----------------------
+Bot By       : @andr0idpie9"""
+
+    # --- Edit the message with the final stats ---
+    await status_msg.edit_text(response_text)
 # ── PHONE LOOKUP HANDLER (/ph) ──
 
 @app.on_message(filters.command("ph"))
