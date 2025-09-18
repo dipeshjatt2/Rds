@@ -155,9 +155,6 @@ async def ping_handler(client, message: Message):
     """
     Shows the bot's and system's current status.
     """
-    import time, platform, psutil
-    from datetime import datetime
-
     # --- Start timing for ping calculation ---
     start_time = time.time()
     status_msg = await message.reply_text("Pinging...")
@@ -187,24 +184,27 @@ async def ping_handler(client, message: Message):
     uptime = str(datetime.now() - BOT_START_TIME).split('.')[0] # Removes microseconds
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # --- Prepare the final message (plain text) ---
-    response_text = f"""System Status
------------------------
-Ping         : {ping}
-System       : {system}
-Architecture : {architecture}
------------------------
-CPU Usage    : {cpu_usage}
-RAM Usage    : {ram_usage}
-Disk Usage   : {disk_usage}
------------------------
-Uptime       : {uptime}
-Time         : {current_time}
------------------------
-Bot By       : @andr0idpie9"""
+    # --- Prepare the final message ---
+    response_text = f"""┏━━━━━━━⍟
+┃ 𝐒𝐲𝐬𝐭𝐞𝐦 𝐒𝐭𝐚𝐭𝐮𝐬
+┗━━━━━━━━━━━⊛
+[☆] 𝐏𝐢𝐧𝐠 ➳ {ping}
+[☆] 𝐒𝐲𝐬𝐭𝐞𝐦 ➳ {system}
+[☆] 𝐀𝐫𝐜𝐡𝐢𝐭𝐞𝐜𝐭𝐮𝐫𝐞 ➳ {architecture}
+──────── ⸙ ─────────
+[☆] 𝐂𝐏𝐔 𝐔𝐬𝐚𝐠𝐞 ➳ {cpu_usage}
+[☆] 𝐑𝐀𝐌 𝐔𝐬𝐚𝐠𝐞 ➳ {ram_usage}
+[☆] 𝐃𝐢𝐬𝐤 𝐔𝐬𝐚𝐠𝐞 ➳ {disk_usage}
+──────── ⸙ ─────────
+[☆] 𝐔𝐩𝐭𝐢𝐦𝐞 ➳ {uptime}
+[☆] 𝐓𝐢𝐦𝐞 ➳ {current_time}
+──────── ⸙ ─────────
+[☆] 𝐁𝐨𝐭 𝐁𝐲 ➳ ⏤‌ @andr0idpie9"""
 
     # --- Edit the message with the final stats ---
     await status_msg.edit_text(response_text)
+
+    
 # ── PHONE LOOKUP HANDLER (/ph) ──
 
 @app.on_message(filters.command("ph"))
