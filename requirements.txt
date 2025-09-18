@@ -1,3 +1,4 @@
+psutil
 convertapi
 python-telegram-bot
 async-lru==2.0.2
