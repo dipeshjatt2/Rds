@@ -186,9 +186,10 @@ async def ping_handler(client, message: Message):
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     # --- Prepare the final message ---
-    response_text = f"""┏━━━━━━━⍟
+    response_text = f"""```
+┏━━━━━━━⍟
 ┃ 𝐒𝐲𝐬𝐭𝐞𝐦 𝐒𝐭𝐚𝐭𝐮𝐬
-┗━━━━━━━━━━━⊛
+┗━━━━━━━━━━━⊛```
 [☆] 𝐏𝐢𝐧𝐠 ➳ {ping}
 [☆] 𝐒𝐲𝐬𝐭𝐞𝐦 ➳ {system}
 [☆] 𝐀𝐫𝐜𝐡𝐢𝐭𝐞𝐜𝐭𝐮𝐫𝐞 ➳ {architecture}
@@ -199,8 +200,8 @@ async def ping_handler(client, message: Message):
 ──────── ⸙ ─────────
 [☆] 𝐔𝐩𝐭𝐢𝐦𝐞 ➳ {uptime}
 [☆] 𝐓𝐢𝐦𝐞 ➳ {current_time}
-──────── ⸙ ─────────
-[☆] 𝐁𝐨𝐭 𝐁𝐲 ➳ ⏤‌ @andr0idpie9"""
+──────── ⸙ ─────────```
+[☆] 𝐁𝐨𝐭 𝐁𝐲 ➳ ⏤‌ @andr0idpie9```"""
 
     # --- Edit the message with the final stats ---
     await status_msg.edit_text(response_text)
@@ -1479,7 +1480,7 @@ async def split_handler(client, message: Message):
         await status_msg.edit(f"❌ An error occurred while processing the file: {e}")
 
 @app.on_message(filters.text & ~filters.command([
-    "start", "help", "create", "txqz", "htmk", "poll2txt", "shufftxt", "split", 
+    "start", "help", "create", "ping", "txqz", "htmk", "poll2txt", "shufftxt", "split", 
     "ph", "ai", "ocr", "arrange"
 ]))
 
