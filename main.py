@@ -1479,8 +1479,138 @@ async def split_handler(client, message: Message):
     except Exception as e:
         await status_msg.edit(f"❌ An error occurred while processing the file: {e}")
 
+# ── Custom Delay Text-to-Poll Sender (/tx) ──
+
+@app.on_message(filters.command("tx"))
+async def tx_handler(client, message: Message):
+    """
+    Sends quiz polls from text or a file with a user-defined delay.
+    Usage: /tx [delay_in_seconds] [quiz_text]
+    Example: /tx 10 ... (sends polls every 10 seconds)
+    Default delay is 3 seconds if not specified.
+    """
+    DEFAULT_DELAY = 3
+    delay = DEFAULT_DELAY
+    content = None
+
+    # --- 1. Get Content & Parse Delay ---
+    if message.reply_to_message and message.reply_to_message.document:
+        try:
+            # Download content from the replied-to file
+            file_path = await message.reply_to_message.download()
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+            os.remove(file_path)
+            
+            # Check for a delay number in the command/caption (e.g., /tx 10)
+            if len(message.command) > 1 and message.command[1].isdigit():
+                parsed_delay = int(message.command[1])
+                if parsed_delay > 0:
+                    delay = parsed_delay
+
+        except Exception as e:
+            await message.reply_text(f"❌ Error downloading document: {str(e)}")
+            return
+    elif len(message.command) > 1:
+        args_text = message.text.split(None, 1)[1]
+        parts = args_text.split(None, 1)
+
+        # Check if the first argument is a positive number for the delay
+        if parts and parts[0].isdigit() and int(parts[0]) > 0:
+            delay = int(parts[0])
+            if len(parts) > 1:
+                content = parts[1] # The rest of the message is content
+            else:
+                await message.reply_text("⚠️ You provided a delay, but no quiz text after it.")
+                return
+        else:
+            # If no valid delay is found, the whole argument is content
+            content = args_text
+    else:
+        await message.reply_text("⚠️ Please provide quiz text after /tx or reply to a text document.")
+        return
+
+    if not content:
+        await message.reply_text("⚠️ No content found.")
+        return
+
+    # --- 2. Parse the Content (Identical logic to /txqz) ---
+    questions = []
+    try:
+        if 'const quizData' in content:
+            json_start = content.find('{')
+            json_end = content.rfind('}') + 1
+            json_str = content[json_start:json_end]
+            data = json.loads(json_str)
+            for item in data['questions']:
+                q = {
+                    'question': item['text'].strip(),
+                    'options': [opt.strip() for opt in item['options']],
+                    'correct': item['correctIndex'],
+                    'explanation': (item.get('explanation', '').strip() + ' ' + item.get('reference', '').strip()).strip()
+                }
+                if q['options'] and q['correct'] < len(q['options']):
+                    questions.append(q)
+    except json.JSONDecodeError:
+        pass
+
+    if not questions:
+        lines = content.splitlines()
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            if re.match(r'^[Qq]?\d+\.', line):
+                q = {'question': re.sub(r'^[Qq]?\d+\.', '', line).strip(), 'options': [], 'correct': -1, 'explanation': ''}
+                i += 1
+                while i < len(lines):
+                    l = lines[i].strip()
+                    if re.match(r'^\([a-z]\)', l):
+                        match = re.match(r'^\(([a-z])\)\s*(.*?)(?:\s*✅)?$', l)
+                        if match:
+                            is_correct = '✅' in lines[i]
+                            q['options'].append(match.group(2).strip())
+                            if is_correct: q['correct'] = len(q['options']) - 1
+                        i += 1
+                    elif l.startswith('Ex:'):
+                        q['explanation'] = re.sub(r'^Ex:', '', l).strip()
+                        i += 1
+                        break
+                    elif re.match(r'^[Qq]?\d+\.', l): break
+                    else: i += 1
+                if q['correct'] != -1 and q['options']: questions.append(q)
+            else: i += 1
+
+    if not questions:
+        await message.reply_text("❌ Unable to parse any quizzes from the provided content.")
+        return
+
+    # --- 3. Send the Polls with the Custom Delay ---
+    total = len(questions)
+    await message.reply_text(f"✅ Parsed {total} quizzes. Sending them with a **{delay} second** delay between each...")
+
+    for i, q in enumerate(questions):
+        try:
+            await client.send_poll(
+                chat_id=message.chat.id,
+                question=q['question'],
+                options=q['options'],
+                type=PollType.QUIZ,
+                correct_option_id=q['correct'],
+                is_anonymous=True,
+                explanation=q['explanation'] if q['explanation'] else None,
+                explanation_parse_mode=ParseMode.DEFAULT
+            )
+        except Exception as e:
+            await message.reply_text(f"❌ Error sending quiz #{i+1}: {str(e)}")
+        
+        if i < total - 1: # Don't sleep after the last poll
+            await asyncio.sleep(delay)
+
+    await message.reply_text("🎉 All quizzes sent!")
+
+
 @app.on_message(filters.text & ~filters.command([
-    "start", "help", "create", "ping", "txqz", "htmk", "poll2txt", "shufftxt", "split", 
+    "start", "help", "create", "ping", "tx", "txqz", "htmk", "poll2txt", "shufftxt", "split", 
     "ph", "ai", "ocr", "arrange"
 ]))
 
