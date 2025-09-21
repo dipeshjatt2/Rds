@@ -1697,128 +1697,191 @@ async def poll_message_handler(client, message: Message):
 
 # ── [NEW] TestNook Scraper (/scr) ──  
 # ── /scr HANDLER ──
-@app.on_message(filters.command("scr"))
-async def scr_handler(client: Client, message: Message):
-    if len(message.text.split()) < 2:
-        await message.reply_text("⚠️ Usage: /scr <creator_url>")
-        return
+# ── 8. [NEW] TestNook Scraper (/scr) ──
 
-    creator_url = message.text.split(maxsplit=1)[1].strip()
-    if not creator_url.startswith("http"):
-        await message.reply_text("❌ Invalid URL. Provide a full creator link.")
-        return
+# --- Helper Functions for Scraper ---
 
-    user_id = message.from_user.id
-    progress_msg = await message.reply_text("⏳ Starting scraping...")
-
+async def fetch(session, url):
+    """Performs an asynchronous GET request."""
     try:
-        zip_path = await scrape_creator(creator_url, user_id, progress_msg)
-        if zip_path:
-            await message.reply_document(zip_path, caption="✅ Scraping complete!")
-            os.remove(zip_path)
-        else:
-            await progress_msg.edit("❌ No quizzes found or failed to scrape.")
+        async with session.get(url, timeout=20) get as response:
+            if response.status == 200:
+                return await response.text()
     except Exception as e:
-        await progress_msg.edit(f"❌ Error: {str(e)}")
+        print(f"Error fetching {url}: {e}")
+    return None
+
+async def get_correct_answer(session, base_url, quiz_id, q_num):
+    """Sends a POST request to find the correct option index."""
+    answer_url = f"{base_url}/quiz/{quiz_id}/answer"
+    referer_url = f"{base_url}/quiz/{quiz_id}/question/{q_num}"
+    payload = {"question_num": q_num, "selected_option": 0} # We can send any option
+    headers = {
+        'Accept': '*/*',
+        'Content-Type': 'application/json',
+        'Origin': base_url,
+        'Referer': referer_url,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
+    }
+    try:
+        async with session.post(answer_url, json=payload, headers=headers, timeout=20) as response:
+            if response.status == 200:
+                data = await response.json()
+                if data.get("success"):
+                    return data.get("correct_option")
+    except Exception as e:
+        print(f"Error getting answer for Q{q_num} of {quiz_id}: {e}")
+    return None
+
+last_update_time = {}
+async def edit_status(message, text, user_id):
+    """Helper to edit status message, respecting FloodWait by only updating every 10s."""
+    global last_update_time
+    current_time = time.time()
+    if user_id not in last_update_time or (current_time - last_update_time.get(user_id, 0)) > 10:
+        try:
+            await message.edit_text(text, parse_mode=ParseMode.HTML)
+            last_update_time[user_id] = current_time
+            await asyncio.sleep(0.1) # Small delay to allow update to process
+        except Exception:
+            pass # Ignore if message can't be edited (e.g., deleted)
 
 
-# ── MAIN SCRAPER FUNCTION ──
-async def scrape_creator(creator_url: str, uid: int, progress_msg: Message):
-    session_timeout = aiohttp.ClientTimeout(total=60)
-    creator_id = creator_url.rstrip("/").split("/")[-1]
-    quiz_data = []
-    page = 1
+# --- Main Command Handler ---
 
-    async with aiohttp.ClientSession(timeout=session_timeout) as session:
-        # ── Crawl all quiz pages ──
+@app.on_message(filters.command("scr"))
+async def scr_handler(client, message: Message):
+    """
+    Scrapes all quizzes from a TestNook creator's page.
+    Usage: /scr [creator_page_url]
+    """
+    args = message.text.split(None, 1)
+    if len(args) < 2 or not args[1].startswith("http"):
+        await message.reply_text("<b>Usage:</b> <code>/scr [URL]</code>\n\nPlease provide a valid creator page URL.", parse_mode=ParseMode.HTML)
+        return
+
+    creator_url = args[1].strip()
+    try:
+        # Extract base URL and creator ID for cleaner operations
+        base_url_match = re.match(r'(https?://[^/]+)', creator_url)
+        creator_id_match = re.search(r'/creator/(\d+)', creator_url)
+        if not base_url_match or not creator_id_match:
+            await message.reply_text("❌ Invalid URL format. Please provide a full creator URL.")
+            return
+        base_url = base_url_match.group(1)
+        creator_id = creator_id_match.group(1)
+    except Exception:
+        await message.reply_text("❌ Could not parse the provided URL.")
+        return
+
+    status_msg = await message.reply_text("🚀 Initializing scraper...")
+    user_id = message.from_user.id
+    all_quiz_info = []
+    
+    # --- 1. Scrape Creator Pages to Find All Quizzes ---
+    async with aiohttp.ClientSession() as session:
+        page_num = 1
+        await edit_status(status_msg, "🔍 Searching for quizzes on creator pages...", user_id)
         while True:
-            url = f"{creator_url}?page={page}"
-            async with session.get(url) as resp:
-                html = await resp.text()
+            paginated_url = f"{base_url}/creator/{creator_id}?page={page_num}"
+            html = await fetch(session, paginated_url)
+            if not html or "No Quizzes Available" in html:
+                break # Stop if page is empty or has the "no quizzes" message
 
-            if "No Quizzes Available" in html:
-                break
+            soup = BeautifulSoup(html, 'html.parser')
+            quiz_cards = soup.find_all('a', class_='quiz-card')
+            if not quiz_cards:
+                break # No more quizzes found on this page
+                
+            for card in quiz_cards:
+                quiz_id = card['href'].split('/')[-1]
+                title_element = card.find('h3', class_='quiz-title')
+                quiz_title = title_element.get_text(strip=True) if title_element else f"quiz_{quiz_id}"
+                # Sanitize filename
+                quiz_title = re.sub(r'[\\/*?:"<>|]', "", quiz_title)
+                all_quiz_info.append({"id": quiz_id, "name": quiz_title})
+            
+            page_num += 1
+            await asyncio.sleep(1) # Be respectful to the server
 
-            soup = BeautifulSoup(html, "html.parser")
-            for div in soup.find_all("div", class_="creator-stats"):
-                title_tag = div.find_previous("h3")
-                if not title_tag:
-                    continue
-                name = title_tag.get_text(strip=True)
-                href = title_tag.find_previous("a")["href"] if title_tag.find_previous("a") else None
-                if href and "/quiz/" in href:
-                    quiz_id = re.search(r"/quiz/([a-f0-9]+)", href).group(1)
-                    quiz_data.append({"id": quiz_id, "name": name})
-
-            page += 1
-
-        if not quiz_data:
-            return None
-
-        # Save json for reference
-        json_path = f"/tmp/{creator_id}_quizzes.json"
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(quiz_data, f, ensure_ascii=False, indent=2)
-
-        # ── Process each quiz ──
-        saved_files = []
-        for idx, quiz in enumerate(quiz_data, start=1):
-            txt_file = f"/tmp/{quiz['name']}.txt"
-            await fetch_quiz(session, quiz["id"], txt_file)
-            saved_files.append(txt_file)
-
-            if idx % 3 == 0:  # update every 3 quizzes (~10s throttle)
-                await progress_msg.edit(f"⏳ Processed {idx}/{len(quiz_data)} quizzes...")
-
-        # ── Make zip ──
-        zip_path = f"/tmp/{creator_id}.zip"
-        with zipfile.ZipFile(zip_path, "w") as zipf:
-            for file in saved_files:
-                arcname = os.path.basename(file)
-                zipf.write(file, arcname)
-                os.remove(file)
-
-        os.remove(json_path)
-        return zip_path
-
-
-# ── QUIZ FETCHER ──
-async def fetch_quiz(session: aiohttp.ClientSession, quiz_id: str, txt_file: str):
-    qn = 0
-    lines = []
-
-    while True:
-        url = f"https://testnookapp-f602da876a9b.herokuapp.com/quiz/{quiz_id}/question/{qn}"
-        async with session.get(url) as resp:
-            html = await resp.text()
-
-        if "Quiz Complete" in html:
-            break
-
-        soup = BeautifulSoup(html, "html.parser")
-        question_text = soup.find("h1", class_="header-title")
-        q_text = question_text.get_text(strip=True) if question_text else f"Q{qn+1}"
-
-        options = []
-        correct_index = None
-        for i, opt in enumerate(soup.select(".option")):
-            text = opt.get_text(strip=True)
-            if "correct" in opt.get("class", []):
-                correct_index = i
-            options.append(text)
-
-        # Format into txt
-        lines.append(f"{qn+1}. {q_text}")
-        for i, opt_text in enumerate(options):
-            mark = " ✅" if i == correct_index else ""
-            lines.append(f"({chr(97+i)}) {opt_text}{mark}")
-        lines.append("")  # blank line after each Q
-
-        qn += 1
-
-    with open(txt_file, "w", encoding="utf-8-sig") as f:
-        f.write("\n".join(lines))
+        if not all_quiz_info:
+            await edit_status(status_msg, "🤷‍♂️ No quizzes found for this creator.", user_id)
+            return
+            
+        await edit_status(status_msg, f"✅ Found {len(all_quiz_info)} quizzes. Starting download...", user_id)
         
+        # --- 2. Scrape Each Quiz and Create TXT Files ---
+        txt_files = []
+        total_quizzes = len(all_quiz_info)
+        
+        for i, quiz in enumerate(all_quiz_info):
+            quiz_id = quiz['id']
+            quiz_name = quiz['name']
+            
+            await edit_status(status_msg, f"⚙️ Processing Quiz {i+1}/{total_quizzes}:\n<b>{quiz_name}</b>", user_id)
+
+            quiz_content = []
+            q_num = 0
+            while True:
+                q_url = f"{base_url}/quiz/{quiz_id}/question/{q_num}"
+                q_html = await fetch(session, q_url)
+
+                if not q_html or "Quiz Complete" in q_html:
+                    break
+
+                q_soup = BeautifulSoup(q_html, 'html.parser')
+                
+                question_text_elem = q_soup.find('div', class_='question-text')
+                if not question_text_elem:
+                    break # Couldn't parse question, might be end of quiz
+                
+                question_text = question_text_elem.get_text(strip=True)
+                options = [opt.get_text(strip=True) for opt in q_soup.find_all('div', class_='option')]
+                
+                correct_option_index = await get_correct_answer(session, base_url, quiz_id, q_num)
+                
+                # Format the question and options
+                formatted_question = f"{q_num + 1}. {question_text}\n"
+                for idx, option in enumerate(options):
+                    option_prefix = f"({chr(97 + idx)})" # a), b), c)...
+                    is_correct = " ✅" if idx == correct_option_index else ""
+                    formatted_question += f"{option_prefix} {option}{is_correct}\n"
+                
+                quiz_content.append(formatted_question)
+                q_num += 1
+                await asyncio.sleep(0.5) # Be respectful
+
+            if quiz_content:
+                filename = f"{quiz_name}.txt"
+                txt_files.append(filename)
+                with open(filename, 'w', encoding='utf-8-sig') as f:
+                    f.write("\n\n".join(quiz_content))
+
+    # --- 3. Compress Files into a ZIP and Send ---
+    if not txt_files:
+        await edit_status(status_msg, "⚠️ Could not download any quiz content.", user_id)
+        return
+        
+    zip_filename = f"{creator_id}.zip"
+    await edit_status(status_msg, f"📦 Compressing {len(txt_files)} files into <b>{zip_filename}</b>...", user_id)
+
+    with zipfile.ZipFile(zip_filename, 'w') as zipf:
+        for file in txt_files:
+            zipf.write(file)
+            
+    await edit_status(status_msg, f"📤 Uploading...", user_id)
+    await client.send_document(message.chat.id, document=zip_filename, caption=f"All quizzes from creator `{creator_id}`")
+    
+    # --- 4. Cleanup ---
+    await status_msg.delete()
+    try:
+        os.remove(zip_filename)
+        for file in txt_files:
+            os.remove(file)
+    except Exception as e:
+        print(f"Cleanup error: {e}")
+
+
 @app.on_message(filters.text & ~filters.command([
     "start", "help", "create", "ping", "poll", "done", "scr", "tx", "txqz", "htmk", "poll2txt", "shufftxt", "split", 
     "ph", "ai", "ocr", "arrange"
