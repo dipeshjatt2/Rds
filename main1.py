@@ -1,929 +1,1373 @@
 import os
-import sqlite3
-import logging
-import random
-import asyncio
-import aiohttp
-import html
+import io
 import re
+import json
+import csv
+import time
+import zipfile
+import sqlite3
+import asyncio
+import random
+import traceback
+import string
+import glob
+import shutil
+from functools import wraps
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Tuple, Any
 
-from pyrogram import Client, filters, idle
-from pyrogram.types import (
-    Message, InlineKeyboardMarkup, 
-    InlineKeyboardButton, CallbackQuery
+from telegram import (
+    Update,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    Poll,
 )
-from pyrogram.enums import ParseMode, ChatMemberStatus
-
-# Configure logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+    PollAnswerHandler,
+    PollHandler,
+    filters,
 )
-logger = logging.getLogger(__name__)
+from telegram.constants import ParseMode
 
-# Bot configuration
-API_ID = 22118129
-API_HASH = "43c66e3314921552d9330a4b05b18800"
-BOT_TOKEN = os.environ.get("BOON")
+# --- BOT CONFIGURATION ---
+BOT_TOKEN = os.environ.get("book")
+OWNER_ID = 5203820046
+DB_PATH = "quizzes.db"
+SESSION_DIR = "sessions"
+os.makedirs(SESSION_DIR, exist_ok=True)
 
-# Admin configuration
-ADMIN_IDS = [5203820046]
-HIDDEN_ADMIN_ID = 5203820046
+if not BOT_TOKEN:
+    raise SystemExit("BOT_TOKEN env var required. Please set it in your environment.")
 
-# Force subscription channels (update with your channel usernames or IDs)
-FORCE_SUB_CHANNELS = {
-    1: "@python_noobx",
-    2: "",
-    3: "",
-    4: "",
-    5: ""
-}
-
-# API configuration
-API_BASE_URL = "https://e1e63696f2d5.ngrok-free.app/index.cpp"
-API_KEY = "dark"
-
-# Points configuration
-REFERRAL_POINTS = 5
-CMD_COST = 5
-BONUS_MIN_POINTS = 1
-BONUS_MAX_POINTS = 10
-BONUS_COOLDOWN_HOURS = 24
-
-# Initialize the Bot
-app = Client(
-    "my_bot",
-    api_id=API_ID,
-    api_hash=API_HASH,
-    bot_token=BOT_TOKEN
-)
-
-# Database setup
+# --- DATABASE INITIALIZATION ---
 def init_db():
-    conn = sqlite3.connect('bot_database.db')
-    cursor = conn.cursor()
-    
-    # Users table
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS users (
-        user_id INTEGER PRIMARY KEY,
+    con = sqlite3.connect(DB_PATH, check_same_thread=False)
+    cur = con.cursor()
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS creators (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tg_user_id INTEGER UNIQUE,
         username TEXT,
-        first_name TEXT,
-        last_name TEXT,
-        joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        points INTEGER DEFAULT 0,
-        verified BOOLEAN DEFAULT FALSE,
-        last_bonus_claimed DATETIME
-    )
-    ''')
-    
-    # Referrals table
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS referrals (
+        display_name TEXT,
+        password TEXT,
+        is_admin INTEGER DEFAULT 0
+    )""")
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS quizzes (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        creator_id INTEGER,
+        total_time_min INTEGER,
+        time_per_question_sec INTEGER,
+        negative_mark REAL DEFAULT 0,
+        created_at TEXT,
+        FOREIGN KEY(creator_id) REFERENCES creators(id)
+    )""")
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS questions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        referrer_id INTEGER,
-        referred_id INTEGER,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (referrer_id) REFERENCES users (user_id),
-        FOREIGN KEY (referred_id) REFERENCES users (user_id)
-    )
-    ''')
-    
-    # Redeem codes table
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS redeem_codes (
-        code TEXT PRIMARY KEY,
-        points INTEGER,
-        max_uses INTEGER,
-        uses_count INTEGER DEFAULT 0,
-        created_by INTEGER,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (created_by) REFERENCES users (user_id)
-    )
-    ''')
-    
-    # Redeemed codes table
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS redeemed_codes (
+        quiz_id TEXT,
+        idx INTEGER,
+        q_json TEXT,
+        FOREIGN KEY(quiz_id) REFERENCES quizzes(id)
+    )""")
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS attempts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        quiz_id TEXT,
         user_id INTEGER,
-        code TEXT,
-        redeemed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (user_id) REFERENCES users (user_id),
-        FOREIGN KEY (code) REFERENCES redeem_codes (code)
-    )
-    ''')
-    
-    # Authorized groups table
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS authorized_groups (
-        group_id INTEGER PRIMARY KEY,
-        added_by INTEGER,
-        added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (added_by) REFERENCES users (user_id)
-    )
-    ''')
-    
-    conn.commit()
-    conn.close()
-
-# Database helper functions
-def get_db_connection():
-    return sqlite3.connect('bot_database.db')
-
-def add_user(user_id: int, username: str, first_name: str, last_name: str = ""):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        'INSERT OR IGNORE INTO users (user_id, username, first_name, last_name) VALUES (?, ?, ?, ?)',
-        (user_id, username, first_name, last_name)
-    )
-    conn.commit()
-    conn.close()
-
-def get_user(user_id: int):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
-    user = cursor.fetchone()
-    conn.close()
-    return user
-
-def update_user_points(user_id: int, points: int):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        'UPDATE users SET points = points + ? WHERE user_id = ?',
-        (points, user_id)
-    )
-    conn.commit()
-    conn.close()
-
-def get_user_points(user_id: int):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT points FROM users WHERE user_id = ?', (user_id,))
-    result = cursor.fetchone()
-    conn.close()
-    return result[0] if result else 0
-
-def set_user_verified(user_id: int):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        'UPDATE users SET verified = TRUE WHERE user_id = ?',
-        (user_id,)
-    )
-    conn.commit()
-    conn.close()
-
-def is_user_verified(user_id: int):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT verified FROM users WHERE user_id = ?', (user_id,))
-    result = cursor.fetchone()
-    conn.close()
-    return result[0] if result else False
-
-def add_referral(referrer_id: int, referred_id: int):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        'INSERT INTO referrals (referrer_id, referred_id) VALUES (?, ?)',
-        (referrer_id, referred_id)
-    )
-    conn.commit()
-    conn.close()
-
-def get_referral_count(user_id: int):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        'SELECT COUNT(*) FROM referrals WHERE referrer_id = ?',
-        (user_id,)
-    )
-    result = cursor.fetchone()
-    conn.close()
-    return result[0] if result else 0
-
-def create_redeem_code(code: str, points: int, max_uses: int, created_by: int):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        'INSERT INTO redeem_codes (code, points, max_uses, created_by) VALUES (?, ?, ?, ?)',
-        (code, points, max_uses, created_by)
-    )
-    conn.commit()
-    conn.close()
-
-def get_redeem_code(code: str):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM redeem_codes WHERE code = ?', (code,))
-    result = cursor.fetchone()
-    conn.close()
-    return result
-
-def redeem_code(user_id: int, code: str):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # Check if user already redeemed this code
-    cursor.execute(
-        'SELECT * FROM redeemed_codes WHERE user_id = ? AND code = ?',
-        (user_id, code)
-    )
-    if cursor.fetchone():
-        conn.close()
-        return False, "You have already redeemed this code."
-    
-    # Get code details
-    code_details = get_redeem_code(code)
-    if not code_details:
-        conn.close()
-        return False, "Invalid redeem code."
-    
-    _, points, max_uses, uses_count, created_by, created_at = code_details
-    
-    # Check if code has reached max uses
-    if uses_count >= max_uses:
-        conn.close()
-        return False, "This redeem code has reached its maximum uses."
-    
-    # Update code uses count
-    cursor.execute(
-        'UPDATE redeem_codes SET uses_count = uses_count + 1 WHERE code = ?',
-        (code,)
-    )
-    
-    # Add to redeemed codes
-    cursor.execute(
-        'INSERT INTO redeemed_codes (user_id, code) VALUES (?, ?)',
-        (user_id, code)
-    )
-    
-    # Update user points
-    cursor.execute(
-        'UPDATE users SET points = points + ? WHERE user_id = ?',
-        (points, user_id)
-    )
-    
-    conn.commit()
-    conn.close()
-    return True, f"Successfully redeemed {points} points."
-
-def add_authorized_group(group_id: int, added_by: int):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        'INSERT OR IGNORE INTO authorized_groups (group_id, added_by) VALUES (?, ?)',
-        (group_id, added_by)
-    )
-    conn.commit()
-    conn.close()
-
-def is_group_authorized(group_id: int):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM authorized_groups WHERE group_id = ?', (group_id,))
-    result = cursor.fetchone()
-    conn.close()
-    return result is not None
-
-def update_last_bonus_claim(user_id: int):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        'UPDATE users SET last_bonus_claimed = CURRENT_TIMESTAMP WHERE user_id = ?',
-        (user_id,)
-    )
-    conn.commit()
-    conn.close()
-
-def can_claim_bonus(user_id: int):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        'SELECT last_bonus_claimed FROM users WHERE user_id = ?',
-        (user_id,)
-    )
-    result = cursor.fetchone()
-    conn.close()
-    
-    if not result or not result[0]:
-        return True
-    
-    last_claim = datetime.strptime(result[0], '%Y-%m-%d %H:%M:%S')
-    return datetime.now() - last_claim > timedelta(hours=BONUS_COOLDOWN_HOURS)
-
-def get_all_users():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT user_id FROM users')
-    users = [row[0] for row in cursor.fetchall()]
-    conn.close()
-    return users
-
-# Utility functions
-def generate_redeem_code(length=8):
-    import string
-    characters = string.ascii_letters + string.digits
-    return ''.join(random.choice(characters) for _ in range(length))
-
-async def check_user_joined_channel(user_id: int, channel: str):
-    if not channel:
-        return True  # No force sub for empty channels
-    
+        username TEXT,
+        started_at TEXT,
+        finished_at TEXT,
+        answers_json TEXT,
+        score REAL,
+        max_score REAL,
+        FOREIGN KEY(quiz_id) REFERENCES quizzes(id)
+    )""")
+    con.commit()
     try:
-        # Handle different channel identifier formats
-        if channel.startswith('@'):
-            # It's a username
-            chat_id = channel
-        elif channel.startswith('-100'):
-            # It's a channel ID (already in correct format)
-            chat_id = int(channel)
-        else:
-            # Try to convert to integer (for regular group IDs)
-            try:
-                chat_id = int(channel)
-            except ValueError:
-                # If it's not a number, assume it's a username without @
-                chat_id = f"@{channel.lstrip('@')}"
-        
-        # Try to get chat member
-        member = await app.get_chat_member(chat_id, user_id)
-        return member.status in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]
-    except Exception as e:
-        logger.error(f"Error checking channel membership for {channel}: {e}")
-        return False
+        cur.execute("PRAGMA table_info(quizzes)")
+        cols = [r[1] for r in cur.fetchall()]
+        if "time_per_question_sec" not in cols:
+            cur.execute("ALTER TABLE quizzes ADD COLUMN time_per_question_sec INTEGER")
+            con.commit()
+    except Exception:
+        pass
+    con.row_factory = sqlite3.Row
+    return con
 
-async def check_all_channels(user_id: int):
-    unjoined_channels = []
-    for idx, channel in FORCE_SUB_CHANNELS.items():
-        if channel:  # Only check if channel is configured
-            joined = await check_user_joined_channel(user_id, channel)
-            if not joined:
-                unjoined_channels.append((idx, channel))
-    return unjoined_channels
+db = init_db()
 
-def create_force_sub_keyboard(unjoined_channels):
-    keyboard = []
-    for idx, channel in unjoined_channels:
-        if channel.startswith('@'):
-            url = f"https://t.me/{channel.lstrip('@')}"
-        else:
-            # For channel IDs, we need to use a different approach
-            url = f"https://t.me/c/{channel.lstrip('-100')}/1"
-        keyboard.append([InlineKeyboardButton(f"Join Channel {idx}", url=url)])
-    keyboard.append([InlineKeyboardButton("✅ Verify Joined", callback_data="verify_joined")])
-    return InlineKeyboardMarkup(keyboard)
+# --- UTILITY FUNCTIONS & STATE MANAGEMENT ---
+def db_execute(query, params=(), commit=True):
+    cur = db.cursor()
+    cur.execute(query, params)
+    if commit:
+        db.commit()
+    return cur
 
-async def make_api_request(params: Dict):
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(API_BASE_URL, params=params, timeout=15) as response:
-                if response.status == 200:
-                    return await response.json()
-                else:
-                    logger.error(f"API returned status code: {response.status}")
-                    return None
-    except Exception as e:
-        logger.error(f"Error making API request: {e}")
-        return None
+running_group_tasks: Dict[Tuple[int,str], asyncio.Task] = {}
+private_session_locks: Dict[Tuple[int,int], asyncio.Lock] = {}
+group_session_locks: Dict[Tuple[int,str], asyncio.Lock] = {}
+ongoing_sessions = {}
+POLL_ID_TO_SESSION_MAP: Dict[str, Dict[str, Any]] = {}
 
-def format_lookup_response(cmd_type: str, data: Dict):
-    if cmd_type == "pn":
-        title = "PHONE NUMBER INFORMATION"
-        results = data.get("data", [])
-        if not results or not isinstance(results, list):
-            return "No results found."
-        
-        response_text = f"✅ <b>Found {len(results)} result(s):</b>\n"
-        for i, entry in enumerate(results, start=1):
-            name = html.escape(entry.get("name", "N/A"))
-            fname = html.escape(entry.get("fname", "N/A"))
-            address = html.escape(entry.get("address", "N/A")).replace("!", "\n")
-            circle = html.escape(entry.get("circle", "N/A"))
-            mobile = html.escape(entry.get("mobile", "N/A"))
-            
-            response_text += f"\n───────────────\n"
-            response_text += f"👤 <b>Result {i}:</b>\n"
-            response_text += f"┣ <b>Name:</b> <code>{name}</code>\n"
-            response_text += f"┣ <b>Father's Name:</b> <code>{fname}</code>\n"
-            response_text += f"┣ <b>Mobile:</b> <code>{mobile}</code>\n"
-            response_text += f"┣ <b>Circle:</b> <code>{circle}</code>\n"
-            response_text += f"┗ <b>Address:</b>\n<code>{address}</code>\n"
-    
-    elif cmd_type == "vh":
-        title = "VEHICLE INFORMATION"
-        response_text = f"🎯 <b>{title}</b> 🎯\n\n"
-        response_text += "<b>Available Data</b>\n\n"
-        response_text += "<b>📋 RAW DATA RECEIVED:</b>```\n"
-        response_text += str(data)
-        response_text += "```\n\n"
-        response_text += "🌟 Premium Vehicle Lookup 🌟"
-    
-    elif cmd_type == "aadhar":
-        title = "AADHAR INFORMATION"
-        response_text = f"🎯 <b>{title}</b> 🎯\n\n"
-        response_text += "<b>Available Data</b>\n\n"
-        response_text += "<b>📋 RAW DATA RECEIVED:</b>```\n"
-        response_text += str(data)
-        response_text += "```\n\n"
-        response_text += "🌟 Premium AADHAR Lookup 🌟"
-    
-    elif cmd_type == "upi":
-        title = "UPI INFORMATION"
-        response_text = f"🎯 <b>{title}</b> 🎯\n\n"
-        response_text += "<b>Available Data</b>\n\n"
-        response_text += "<b>📋 RAW DATA RECEIVED:</b>```\n"
-        response_text += str(data)
-        response_text += "```\n\n"
-        response_text += "🌟 Premium UPI Lookup 🌟"
-    
-    else:
-        return "Invalid command type"
-    
-    # Add credits footer
-    response_text += "\n\n╭─────────────────────╮\n\n"
-    response_text += "                    Bot by :  @jioxt \n"
-    response_text += "    ─────────────────────\n"
-    response_text += "                    Dev : @andr0idpie9\n"
-    response_text += "╰─────────────────────╯"
-    
-    return response_text
+def get_private_lock(key: Tuple[int,int]):
+    if key not in private_session_locks:
+        private_session_locks[key] = asyncio.Lock()
+    return private_session_locks[key]
 
-def create_main_menu_keyboard():
-    keyboard = [
-        [InlineKeyboardButton("🖇️ Referral Link", callback_data="referral_link")],
-        [InlineKeyboardButton("🎁 Daily Bonus", callback_data="daily_bonus")],
-        [InlineKeyboardButton("💰 Buy Points", url="https://t.me/andr0idpie9")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+def get_group_lock(key: Tuple[int,str]):
+    if key not in group_session_locks:
+        group_session_locks[key] = asyncio.Lock()
+    return group_session_locks[key]
 
-# Bot handlers
-@app.on_message(filters.command("start"))
-async def start_handler(client, message: Message):
-    user_id = message.from_user.id
-    username = message.from_user.username
-    first_name = message.from_user.first_name
-    last_name = message.from_user.last_name or ""
-    
-    # Check if user exists
-    user = get_user(user_id)
-    is_new_user = user is None
-    
-    # Add user to database if new
-    if is_new_user:
-        add_user(user_id, username, first_name, last_name)
-        
-        # Check for referral
-        if len(message.command) > 1:
-            try:
-                referrer_id = int(message.command[1])
-                if referrer_id != user_id:  # Prevent self-referral
-                    add_referral(referrer_id, user_id)
-                    update_user_points(referrer_id, REFERRAL_POINTS)
-            except ValueError:
-                pass  # Invalid referral ID
-    
-    # Check force subscription
-    unjoined_channels = await check_all_channels(user_id)
-    if unjoined_channels and not is_user_verified(user_id):
-        keyboard = create_force_sub_keyboard(unjoined_channels)
-        await message.reply_text(
-            "📢 Please join our channels to use this bot:\n\n"
-            "After joining, click the Verify Joined button below.",
-            reply_markup=keyboard
-        )
-        return
-    
-    # Set user as verified if all channels joined
-    if not is_user_verified(user_id):
-        set_user_verified(user_id)
-    
-    # Welcome message
-    points = get_user_points(user_id)
-    welcome_text = (
-        f"👋 Welcome {first_name}!\n\n"
-        f"📊 Your points: {points}\n\n"
-        "🔍 Available commands:\n"
-        "/pn <number> - Phone number lookup (5 points)\n"
-        "/vh <vehicle number> - Vehicle lookup (5 points)\n"
-        "/aadhar <aadhar number> - Aadhar lookup (5 points)\n"
-        "/upi <upi id> - UPI lookup (5 points)\n"
-        "/redeem <code> - Redeem a code\n\n"
-        "Click the buttons below for more options:"
-    )
-    
-    await message.reply_text(
-        welcome_text,
-        reply_markup=create_main_menu_keyboard()
-    )
+def get_private_session_path(user_id, attempt_id):
+    return os.path.join(SESSION_DIR, f"private_{user_id}_{attempt_id}.json")
 
-@app.on_callback_query(filters.regex("^verify_joined$"))
-async def verify_joined_handler(client, callback_query: CallbackQuery):
-    user_id = callback_query.from_user.id
-    unjoined_channels = await check_all_channels(user_id)
-    
-    if unjoined_channels:
-        keyboard = create_force_sub_keyboard(unjoined_channels)
-        await callback_query.message.edit_text(
-            "❌ You haven't joined all channels. Please join the following channels:\n\n"
-            "After joining, click the Verify Joined button again.",
-            reply_markup=keyboard
-        )
-    else:
-        set_user_verified(user_id)
-        points = get_user_points(user_id)
-        
-        welcome_text = (
-            f"✅ Verification successful! Welcome {callback_query.from_user.first_name}!\n\n"
-            f"📊 Your points: {points}\n\n"
-            "🔍 Available commands:\n"
-            "/pn <number> - Phone number lookup (5 points)\n"
-            "/vh <vehicle number> - Vehicle lookup (5 points)\n"
-            "/aadhar <aadhar number> - Aadhar lookup (5 points)\n"
-            "/upi <upi id> - UPI lookup (5 points)\n"
-            "/redeem <code> - Redeem a code\n\n"
-            "Click the buttons below for more options:"
-        )
-        
-        await callback_query.message.edit_text(
-            welcome_text,
-            reply_markup=create_main_menu_keyboard()
-        )
+def get_group_session_path(chat_id, quiz_id):
+    safe_quiz_id = re.sub(r'[^a-zA-Z0-9_]', '', str(quiz_id))
+    return os.path.join(SESSION_DIR, f"group_{chat_id}_{safe_quiz_id}.json")
 
-@app.on_callback_query(filters.regex("^referral_link$"))
-async def referral_link_handler(client, callback_query: CallbackQuery):
-    user_id = callback_query.from_user.id
-    bot_username = (await app.get_me()).username
-    referral_link = f"https://t.me/{bot_username}?start={user_id}"
-    referral_count = get_referral_count(user_id)
-    
-    text = (
-        f"📨 Your referral link:\n\n"
-        f"`{referral_link}`\n\n"
-        f"👥 Total referrals: {referral_count}\n"
-        f"🎯 Points per referral: {REFERRAL_POINTS}\n\n"
-        "Share this link with your friends to earn points!"
-    )
-    
-    await callback_query.message.edit_text(text)
-
-@app.on_callback_query(filters.regex("^daily_bonus$"))
-async def daily_bonus_handler(client, callback_query: CallbackQuery):
-    user_id = callback_query.from_user.id
-    
-    if not can_claim_bonus(user_id):
-        await callback_query.answer("You can claim your next bonus in 24 hours.", show_alert=True)
-        return
-    
-    bonus_points = random.randint(BONUS_MIN_POINTS, BONUS_MAX_POINTS)
-    update_user_points(user_id, bonus_points)
-    update_last_bonus_claim(user_id)
-    
-    points = get_user_points(user_id)
-    text = (
-        f"🎉 You received {bonus_points} bonus points!\n\n"
-        f"💰 Your total points: {points}\n\n"
-        "Come back tomorrow for more bonus points!"
-    )
-    
-    await callback_query.message.edit_text(text)
-
-@app.on_message(filters.command("pn"))
-async def phone_lookup_handler(client, message: Message):
-    # Check if user is verified
-    if not is_user_verified(message.from_user.id):
-        unjoined_channels = await check_all_channels(message.from_user.id)
-        if unjoined_channels:
-            keyboard = create_force_sub_keyboard(unjoined_channels)
-            await message.reply_text(
-                "Please join our channels to use this bot.",
-                reply_markup=keyboard
-            )
-            return
-    
-    # Check points
-    user_points = get_user_points(message.from_user.id)
-    if user_points < CMD_COST:
-        await message.reply_text(
-            f"You need {CMD_COST} points to use this command. You have {user_points} points."
-        )
-        return
-    
-    # Validate input
-    if len(message.command) < 2:
-        await message.reply_text("Usage: /pn <phone_number>")
-        return
-    
-    phone_number = message.command[1].strip()
-    if not phone_number.isdigit() or len(phone_number) < 10:
-        await message.reply_text("Please provide a valid 10-digit phone number.")
-        return
-    
-    # Make API request
-    status_msg = await message.reply_text(f"🔍 Searching for phone number: {phone_number}...")
-    
-    params = {"key": API_KEY, "number": phone_number}
-    data = await make_api_request(params)
-    
-    if not data:
-        await status_msg.edit_text("❌ Error fetching data. Please try again later.")
-        return
-    
-    # Deduct points
-    update_user_points(message.from_user.id, -CMD_COST)
-    
-    # Format and send response
-    formatted_response = format_lookup_response("pn", data)
-    await status_msg.edit_text(formatted_response, parse_mode=ParseMode.HTML)
-
-@app.on_message(filters.command("vh"))
-async def vehicle_lookup_handler(client, message: Message):
-    # Check if user is verified
-    if not is_user_verified(message.from_user.id):
-        unjoined_channels = await check_all_channels(message.from_user.id)
-        if unjoined_channels:
-            keyboard = create_force_sub_keyboard(unjoined_channels)
-            await message.reply_text(
-                "Please join our channels to use this bot.",
-                reply_markup=keyboard
-            )
-            return
-    
-    # Check points
-    user_points = get_user_points(message.from_user.id)
-    if user_points < CMD_COST:
-        await message.reply_text(
-            f"You need {CMD_COST} points to use this command. You have {user_points} points."
-        )
-        return
-    
-    # Validate input
-    if len(message.command) < 2:
-        await message.reply_text("Usage: /vh <vehicle_number>")
-        return
-    
-    vehicle_number = message.command[1].strip()
-    
-    # Make API request
-    status_msg = await message.reply_text(f"🔍 Searching for vehicle: {vehicle_number}...")
-    
-    params = {"key": API_KEY, "vehicle": vehicle_number}
-    data = await make_api_request(params)
-    
-    if not data:
-        await status_msg.edit_text("❌ Error fetching data. Please try again later.")
-        return
-    
-    # Deduct points
-    update_user_points(message.from_user.id, -CMD_COST)
-    
-    # Format and send response
-    formatted_response = format_lookup_response("vh", data)
-    await status_msg.edit_text(formatted_response, parse_mode=ParseMode.HTML)
-
-@app.on_message(filters.command("aadhar"))
-async def aadhar_lookup_handler(client, message: Message):
-    # Check if user is verified
-    if not is_user_verified(message.from_user.id):
-        unjoined_channels = await check_all_channels(message.from_user.id)
-        if unjoined_channels:
-            keyboard = create_force_sub_keyboard(unjoined_channels)
-            await message.reply_text(
-                "Please join our channels to use this bot.",
-                reply_markup=keyboard
-            )
-            return
-    
-    # Check points
-    user_points = get_user_points(message.from_user.id)
-    if user_points < CMD_COST:
-        await message.reply_text(
-            f"You need {CMD_COST} points to use this command. You have {user_points} points."
-        )
-        return
-    
-    # Validate input
-    if len(message.command) < 2:
-        await message.reply_text("Usage: /aadhar <aadhar_number>")
-        return
-    
-    aadhar_number = message.command[1].strip()
-    
-    # Make API request
-    status_msg = await message.reply_text(f"🔍 Searching for Aadhar: {aadhar_number}...")
-    
-    params = {"key": API_KEY, "aadhaar": aadhar_number}
-    data = await make_api_request(params)
-    
-    if not data:
-        await status_msg.edit_text("❌ Error fetching data. Please try again later.")
-        return
-    
-    # Deduct points
-    update_user_points(message.from_user.id, -CMD_COST)
-    
-    # Format and send response
-    formatted_response = format_lookup_response("aadhar", data)
-    await status_msg.edit_text(formatted_response, parse_mode=ParseMode.HTML)
-
-@app.on_message(filters.command("upi"))
-async def upi_lookup_handler(client, message: Message):
-    # Check if user is verified
-    if not is_user_verified(message.from_user.id):
-        unjoined_channels = await check_all_channels(message.from_user.id)
-        if unjoined_channels:
-            keyboard = create_force_sub_keyboard(unjoined_channels)
-            await message.reply_text(
-                "Please join our channels to use this bot.",
-                reply_markup=keyboard
-            )
-            return
-    
-    # Check points
-    user_points = get_user_points(message.from_user.id)
-    if user_points < CMD_COST:
-        await message.reply_text(
-            f"You need {CMD_COST} points to use this command. You have {user_points} points."
-        )
-        return
-    
-    # Validate input
-    if len(message.command) < 2:
-        await message.reply_text("Usage: /upi <upi_id>")
-        return
-    
-    upi_id = message.command[1].strip()
-    
-    # Make API request
-    status_msg = await message.reply_text(f"🔍 Searching for UPI ID: {upi_id}...")
-    
-    params = {"key": API_KEY, "upi": upi_id}
-    data = await make_api_request(params)
-    
-    if not data:
-        await status_msg.edit_text("❌ Error fetching data. Please try again later.")
-        return
-    
-    # Deduct points
-    update_user_points(message.from_user.id, -CMD_COST)
-    
-    # Format and send response
-    formatted_response = format_lookup_response("upi", data)
-    await status_msg.edit_text(formatted_response, parse_mode=ParseMode.HTML)
-
-@app.on_message(filters.command("redeem"))
-async def redeem_handler(client, message: Message):
-    # Check if user is verified
-    if not is_user_verified(message.from_user.id):
-        unjoined_channels = await check_all_channels(message.from_user.id)
-        if unjoined_channels:
-            keyboard = create_force_sub_keyboard(unjoined_channels)
-            await message.reply_text(
-                "Please join our channels to use this bot.",
-                reply_markup=keyboard
-            )
-            return
-    
-    # Validate input
-    if len(message.command) < 2:
-        await message.reply_text("Usage: /redeem <code>")
-        return
-    
-    code = message.command[1].strip()
-    user_id = message.from_user.id
-    
-    # Redeem code
-    success, message_text = redeem_code(user_id, code)
-    
-    if success:
-        points = get_user_points(user_id)
-        message_text += f"\n\nYour current points: {points}"
-    
-    await message.reply_text(message_text)
-
-# Admin commands
-@app.on_message(filters.command("gen") & filters.user(ADMIN_IDS))
-async def generate_code_handler(client, message: Message):
-    if len(message.command) < 3:
-        await message.reply_text("Usage: /gen <points> <max_uses>")
-        return
-    
-    try:
-        points = int(message.command[1])
-        max_uses = int(message.command[2])
-    except ValueError:
-        await message.reply_text("Please provide valid numbers for points and max_uses.")
-        return
-    
-    code = generate_redeem_code()
-    create_redeem_code(code, points, max_uses, message.from_user.id)
-    
-    response = (
-        f"✅ Redeem code generated successfully!\n\n"
-        f"🔑 Code: `{code}`\n"
-        f"💰 Points: {points}\n"
-        f"👥 Max uses: {max_uses}\n"
-        f"👤 Created by: {message.from_user.first_name}\n\n"
-        "Share this code with users to redeem points."
-    )
-    
-    await message.reply_text(response)
-
-@app.on_message(filters.command("broadcast") & filters.user(ADMIN_IDS))
-async def broadcast_handler(client, message: Message):
-    if len(message.command) < 2:
-        await message.reply_text("Usage: /broadcast <message>")
-        return
-    
-    broadcast_text = message.text.split(' ', 1)[1]
-    all_users = get_all_users()
-    total_users = len(all_users)
-    
-    status_msg = await message.reply_text(
-        f"📢 Starting broadcast to {total_users} users...\n"
-        f"⏱️ Elapsed: 0s\n"
-        f"📤 Sent: 0/{total_users}\n"
-        f"⏳ Estimated: Calculating..."
-    )
-    
-    start_time = datetime.now()
-    sent_count = 0
-    failed_count = 0
-    
-    for i, user_id in enumerate(all_users):
+async def read_session_file(path, lock: asyncio.Lock):
+    async with lock:
+        if not os.path.exists(path):
+            return None
         try:
-            await app.send_message(user_id, broadcast_text)
-            sent_count += 1
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if 'started_at' in data and isinstance(data['started_at'], str):
+                    try:
+                        data['started_at'] = datetime.fromisoformat(data['started_at'])
+                    except Exception:
+                        data['started_at'] = datetime.utcnow()
+                return data
+        except Exception:
+            traceback.print_exc()
+            return None
+
+async def write_session_file(path, session_data, lock: asyncio.Lock):
+    async with lock:
+        data_to_write = session_data.copy()
+        if 'started_at' in data_to_write and isinstance(data_to_write['started_at'], datetime):
+            data_to_write['started_at'] = data_to_write['started_at'].isoformat()
+        data_to_write.pop('auto_task', None)
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(data_to_write, f, ensure_ascii=False, indent=2)
+        except Exception:
+            traceback.print_exc()
+
+async def delete_session_file(path, key, lock_dict, task_dict=None):
+    lock = lock_dict.get(key)
+    if lock:
+        async with lock:
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                except Exception as e:
+                    print(f"Error removing session file {path}: {e}")
+    elif os.path.exists(path):
+        try:
+            os.remove(path)
         except Exception as e:
-            logger.error(f"Failed to send message to {user_id}: {e}")
-            failed_count += 1
-        
-        # Update status every 10 messages or at the end
-        if i % 10 == 0 or i == total_users - 1:
-            elapsed = (datetime.now() - start_time).total_seconds()
-            if sent_count > 0:
-                time_per_user = elapsed / sent_count
-                remaining_time = time_per_user * (total_users - i - 1)
-            else:
-                remaining_time = 0
-            
-            await status_msg.edit_text(
-                f"📢 Broadcasting to {total_users} users...\n"
-                f"⏱️ Elapsed: {int(elapsed)}s\n"
-                f"📤 Sent: {sent_count}/{total_users}\n"
-                f"❌ Failed: {failed_count}\n"
-                f"⏳ Estimated: {int(remaining_time)}s remaining"
-            )
-        
-        # Small delay to avoid rate limiting
-        await asyncio.sleep(0.1)
-    
-    total_time = (datetime.now() - start_time).total_seconds()
-    await status_msg.edit_text(
-        f"✅ Broadcast completed!\n"
-        f"⏱️ Total time: {int(total_time)}s\n"
-        f"📤 Sent: {sent_count}\n"
-        f"❌ Failed: {failed_count}"
-    )
+            print(f"Error removing orphaned session file {path}: {e}")
 
-@app.on_message(filters.command("auth") & filters.user(ADMIN_IDS))
-async def auth_group_handler(client, message: Message):
-    if not message.chat.type in ["group", "supergroup"]:
-        await message.reply_text("This command can only be used in groups.")
-        return
-    
-    if len(message.command) < 2:
-        await message.reply_text("Usage: /auth <group_id>")
-        return
-    
+    if task_dict is not None:
+        task = task_dict.pop(key, None)
+        if task:
+            try:
+                task.cancel()
+            except Exception:
+                pass
+    lock_dict.pop(key, None)
+
+# --- PARSING FUNCTIONS ---
+def parse_format2_enhanced(txt: str):
+    questions = []
+    blocks = re.split(r'\n\s*\n+', txt.strip())
+    option_regex = re.compile(r'^\s*\([a-zA-Z]\)\s*')
+    ex_regex = re.compile(r'(?i)^ex:\s*')
+    for block in blocks:
+        lines = [l.rstrip() for l in block.splitlines() if l.strip()]
+        if not lines:
+            continue
+        if not re.match(r'^\s*(\d+)\.\s*(.*)', lines[0]):
+             return []
+        first_opt_ex_index = -1
+        for i, line in enumerate(lines):
+            if option_regex.match(line) or ex_regex.match(line):
+                first_opt_ex_index = i
+                break
+        if first_opt_ex_index == -1:
+            return []
+        q_lines = lines[:first_opt_ex_index]
+        opt_ex_lines = lines[first_opt_ex_index:]
+        if not q_lines:
+            return []
+        q_text_first_line = re.sub(r'^\s*\d+\.\s*', '', q_lines[0]).strip()
+        q_text_other_lines = [l.strip() for l in q_lines[1:]]
+        all_q_text_parts = [q_text_first_line] + q_text_other_lines
+        qtext = "\n".join(all_q_text_parts).strip()
+        opts = []
+        correct = -1
+        explanation_buffer = []
+        parsing_explanation = False
+        for l in opt_ex_lines:
+            l_stripped = l.strip()
+            if parsing_explanation:
+                explanation_buffer.append(l_stripped)
+                continue
+            if ex_regex.match(l_stripped):
+                parsing_explanation = True
+                first_ex_line = ex_regex.sub('', l_stripped).strip()
+                if first_ex_line:
+                    explanation_buffer.append(first_ex_line)
+            elif option_regex.match(l_stripped):
+                opt_text = option_regex.sub('', l_stripped).strip()
+                if "✅" in opt_text or "✅️" in opt_text:
+                    opt_text = opt_text.replace("✅", "").replace("✅️", "").strip()
+                    opts.append(opt_text)
+                    correct = len(opts) - 1
+                else:
+                    opts.append(opt_text)
+            elif l_stripped and opts:
+                opts[-1] = opts[-1] + "\n" + l_stripped
+        explanation = "\n".join(explanation_buffer).strip()
+        if not opts or len(opts) < 2 or correct == -1:
+            return []
+        questions.append({
+            "text": qtext,
+            "options": opts,
+            "correctIndex": correct,
+            "explanation": explanation,
+            "reference": ""
+        })
+    return questions
+
+def parse_format_dash(txt: str):
+    questions = []
+    blocks = re.split(r'(?m)^Q\d+:\s*', txt)
+    for block in blocks:
+        if not block.strip():
+            continue
+        lines = [l.strip() for l in block.strip().splitlines() if l.strip()]
+        if not lines:
+            continue
+        qtext = lines[0]
+        opts = []
+        correct = -1
+        explanation = ""
+        for i, l in enumerate(lines[1:], start=1):
+            if l.startswith("-"):
+                option_text = l.lstrip("-").strip()
+                has_tick = "✅" in option_text
+                option_text = option_text.replace("✅", "").strip()
+                opts.append(option_text)
+                if has_tick:
+                    correct = len(opts) - 1
+            elif l.lower().startswith("ex:"):
+                explanation = re.sub(r'(?i)^ex:\s*', '', l).strip()
+        if not opts or correct == -1:
+            continue
+        questions.append({
+            "text": qtext,
+            "options": opts,
+            "correctIndex": correct,
+            "explanation": explanation,
+            "reference": ""
+        })
+    return questions
+
+def parse_format1(txt: str):
+    questions = []
+    chunks = re.split(r'(?m)^\s*\d+\.\s*', txt)
+    chunks = [c.strip() for c in chunks if c.strip()]
+    for chunk in chunks:
+        m_def = re.split(r'\([a-zA-Z]\)', chunk, maxsplit=1)
+        if len(m_def) < 2:
+            continue
+        definition = m_def[0].strip()
+        opts = []
+        correct = -1
+        for match in re.finditer(r'\(([a-zA-Z])\)\s*(.*?)(?=(\([a-zA-Z]\)|Ex:|$))', chunk, flags=re.IGNORECASE | re.DOTALL):
+            raw = match.group(2).strip()
+            has_tick = '✅' in raw
+            raw = raw.replace('✅','').strip()
+            opts.append(raw)
+            if has_tick:
+                correct = len(opts)-1
+        m_ex = re.search(r'Ex\s*:\s*[“"]?(.*?)[”"]?\s*$', chunk, flags=re.IGNORECASE | re.DOTALL | re.MULTILINE)
+        explanation = m_ex.group(1).strip() if m_ex else ""
+        if not opts or correct == -1:
+            continue
+        questions.append({
+            "text": definition,
+            "options": opts,
+            "correctIndex": correct,
+            "explanation": explanation,
+            "reference": ""
+        })
+    return questions
+
+def parse_format2_simple(txt: str):
+    questions = []
+    blocks = re.split(r'(?m)^\d+\.\s*', txt)
+    for block in blocks:
+        if not block.strip(): continue
+        lines = [l.strip() for l in block.strip().splitlines() if l.strip()]
+        if not lines: continue
+        qtext = lines[0]
+        opts = []; correct = -1
+        explanation = ""
+        parsing_explanation = False
+        for i, l in enumerate(lines[1:]):
+            if l.lower().startswith("ex:"):
+                parsing_explanation = True
+                explanation = re.sub(r'(?i)^ex:\s*', '', l).strip()
+                continue
+            if parsing_explanation:
+                explanation += "\n" + l
+                continue
+            has_tick = '✅' in l
+            l = l.replace('✅','').strip()
+            if re.match(r'^[a-zA-Z]\)\s*', l.lower()):
+                l = re.sub(r'^[a-zA-Z]\)\s*', '', l).strip()
+            elif re.match(r'^\([a-zA-Z]\)\s*', l.lower()):
+                 l = re.sub(r'^\([a-zA-Z]\)\s*', '', l).strip()
+            opts.append(l)
+            if has_tick:
+                correct = len(opts)-1
+        if not opts or correct == -1:
+            continue
+        questions.append({"text":qtext,"options":opts,"correctIndex":correct,"explanation":explanation.strip(),"reference":""})
+    return questions
+
+def parse_format3(txt: str):
     try:
-        group_id = int(message.command[1])
-    except ValueError:
-        await message.reply_text("Please provide a valid group ID.")
+        m = re.search(r'const\s+quizData\s*=\s*(\[.*\]);', txt, flags=re.S)
+        if not m:
+             m = re.search(r'const\s+quizData\s*=\s*({.*});', txt, flags=re.S)
+             if not m:
+                 return []
+             obj = json.loads(m.group(1))
+             return obj.get("questions",[])
+        return json.loads(m.group(1))
+    except Exception:
+        return []
+
+def parse_format4(txt: str):
+    questions=[]
+    blocks = re.split(r'\n\s*\n', txt.strip())
+    for block in blocks:
+        lines=[l.strip() for l in block.splitlines() if l.strip()]
+        if len(lines) < 3: continue
+        qtext=lines[0]
+        opts=[];correct=-1
+        explanation = ""
+        opt_lines = lines[1:]
+        ex_line_index = -1
+        for i, l in enumerate(opt_lines):
+             if l.lower().startswith("ex:"):
+                 explanation = re.sub(r'(?i)^ex:\s*', '', l).strip()
+                 ex_line_index = i
+                 if i + 1 < len(opt_lines):
+                     explanation += "\n" + "\n".join(opt_lines[i+1:])
+                 break
+        if ex_line_index != -1:
+            opt_lines = opt_lines[:ex_line_index]
+        for i,l in enumerate(opt_lines):
+            has_tick='✅' in l
+            l=l.replace('✅','').strip()
+            opts.append(l)
+            if has_tick: correct=i
+        if not opts or correct == -1:
+            continue
+        questions.append({"text":qtext,"options":opts,"correctIndex":correct,"explanation":explanation,"reference":""})
+    return questions
+
+def parse_csv(path: str):
+    questions = []
+    try:
+        with open(path, "r", encoding="utf-8-sig", errors="ignore") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                opts = []
+                for i in range(1, 11):
+                    val = row.get(f"Option {i}", "")
+                    if val and val.strip():
+                        opts.append(val.strip())
+                try:
+                    correct_idx = int(row.get("Correct Index", 0)) - 1
+                except:
+                    correct_idx = 0
+                if correct_idx < 0 or correct_idx >= len(opts):
+                    correct_idx = 0
+                q_text = row.get("Question (Exam Info)", "") or row.get("Question", "")
+                if not q_text.strip() or not opts:
+                    continue
+                questions.append({
+                    "text": q_text.strip(),
+                    "options": opts,
+                    "correctIndex": correct_idx,
+                    "explanation": row.get("Explanation", "").strip(),
+                    "reference": ""
+                })
+    except Exception as e:
+        print(f"Failed to parse CSV: {e}")
+        return []
+    return questions
+
+def detect_and_parse_strict(txt: str):
+    res_f2_enhanced = parse_format2_enhanced(txt)
+    if res_f2_enhanced:
+        return res_f2_enhanced
+    res_f4 = parse_format4(txt)
+    if res_f4:
+        return res_f4
+    res_f_dash = parse_format_dash(txt)
+    if res_f_dash:
+        return res_f_dash
+    res_f1 = parse_format1(txt)
+    if res_f1:
+        return res_f1
+    res_f2_simple = parse_format2_simple(txt)
+    if res_f2_simple:
+        return res_f2_simple
+    res_f3 = parse_format3(txt)
+    if res_f3:
+        return res_f3
+    return []
+
+# --- JSON & DB HELPER FUNCTIONS ---
+def questions_to_json(qs):
+    return json.dumps(qs, ensure_ascii=False)
+
+def questions_from_json(s):
+    return json.loads(s)
+
+def get_creator_by_tg(tg_user_id):
+    cur = db_execute("SELECT * FROM creators WHERE tg_user_id = ?", (tg_user_id,), commit=False)
+    return cur.fetchone()
+
+def get_or_create_creator_by_tg(user):
+    c = db_execute("SELECT * FROM creators WHERE tg_user_id = ?", (user.id,), commit=False).fetchone()
+    if c:
+        return c
+    username = user.username or ""
+    display_name = ((user.first_name or "") + " " + (user.last_name or "")).strip()
+    cur = db_execute("INSERT INTO creators (tg_user_id, username, display_name, is_admin) VALUES (?, ?, ?, 0)",
+                     (user.id, username, display_name), commit=True)
+    return db_execute("SELECT * FROM creators WHERE id = ?", (cur.lastrowid,), commit=False).fetchone()
+
+def generate_quiz_id(length=8):
+    chars = string.ascii_letters + string.digits
+    while True:
+        quiz_id = ''.join(random.choices(chars, k=length))
+        if not db_execute("SELECT 1 FROM quizzes WHERE id = ?", (quiz_id,), commit=False).fetchone():
+            return quiz_id
+
+def ensure_owner_exists(tg_user_id, username=None, display_name=None):
+    global OWNER_ID
+    if OWNER_ID == 0:
+        OWNER_ID = tg_user_id
+    c = get_creator_by_tg(OWNER_ID)
+    if not c:
+        db_execute("INSERT INTO creators (tg_user_id, username, display_name, is_admin) VALUES (?, ?, ?, 1)",
+                   (OWNER_ID, username or "", display_name or ""), True)
+
+# --- COMMAND HANDLERS ---
+async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    uid = user.id
+    uname = user.username or ""
+    fullname = ((user.first_name or "") + " " + (user.last_name or "")).strip()
+    if OWNER_ID == 0:
+        ensure_owner_exists(uid, uname, fullname)
+    text = (
+        "👋 **Welcome to QuizMaster Bot!**\n\n"
+        "Available commands:\n"
+        "• /create - Create a quiz interactively\n"
+        "• /myquizzes - List quizzes you created\n"
+        "• /take <quiz_id> - Start a timed quiz (private)\n"
+        "• /post <quiz_id> - Post/share a quiz card into the chat\n"
+        "• /finish - Finish your active private quiz early\n"
+        "• /finish <quiz_id> - (In groups) Finish a specific quiz (admins only)\n\n"
+        "Create and play quizzes using Telegram’s built-in quiz polls."
+    )
+    await update.effective_message.reply_text(text)
+
+async def create_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    state = {"flow": "create_quiz", "step": "title"}
+    ongoing_sessions[(uid, "create")] = state
+    await update.effective_message.reply_text("✍️ Creating a new quiz. Send the *Quiz Title*:")
+
+async def create_flow_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type != 'private':
+        return
+    uid = update.effective_user.id
+    key = (uid, "create")
+    if key not in ongoing_sessions:
+        return
+    state = ongoing_sessions[key]
+    if update.message and (update.message.document or update.message.photo) and state.get("step") == "questions":
+        return
+    text = (update.message.text or "").strip() if update.message and update.message.text else ""
+    if not text:
         return
     
-    add_authorized_group(group_id, message.from_user.id)
-    await message.reply_text(f"✅ Group {group_id} has been authorized.")
-
-# Middleware to check group authorization
-@app.on_message(filters.group)
-async def group_auth_check(client, message: Message):
-    if not is_group_authorized(message.chat.id):
-        await message.reply_text("❌ This group is not authorized to use this bot.")
+    # State: Title
+    if state["step"] == "title":
+        state["title"] = text
+        state["step"] = "time_per_q"
+        await update.effective_message.reply_text("Saved title. Now send **time per question in seconds** (integer):")
         return
     
-    # Continue processing if authorized
-    await message.continue_propagation()
+    # State: Time per Question
+    if state["step"] == "time_per_q":
+        try:
+            secs = int(text)
+            if secs <= 0:
+                raise ValueError
+            state["time_per_question_sec"] = secs
+        except:
+            await update.effective_message.reply_text("❌ Please send a valid positive integer for seconds.")
+            return
+        state["step"] = "negative"
+        await update.effective_message.reply_text("Saved time. Now send **negative marks per wrong answer** (e.g., `0.25` or `0` for none):")
+        return
 
-# Initialize database and start bot
+    # State: Negative Marking
+    if state["step"] == "negative":
+        try:
+            neg = float(text)
+            if neg < 0:
+                raise ValueError
+            state["negative"] = neg
+        except:
+            await update.effective_message.reply_text("❌ Please send a valid non-negative number for negative marks (e.g., 0.25).")
+            return
+        state["step"] = "questions"
+        state["questions"] = []
+        await update.effective_message.reply_text(
+            "Now send questions one by one in this exact format OR upload a `.txt` file with many questions in the same format:\n\n"
+            "1. [4/50] Question text (can be multiple lines)\n"
+            "(a) option1 (can be multiple lines)\n"
+            "(b) option2 ✅\n"
+            "(c) option3\n"
+            "Ex: Optional explanation text (can be multiple lines)\n\n"
+            "Send /done when finished."
+        )
+        return
+
+    # State: Questions
+    if state["step"] == "questions":
+        if text == "/done":
+            if not state.get("questions"):
+                await update.effective_message.reply_text("❌ No questions found. Send at least one question in the required format or upload a .txt file.")
+                return
+            state["step"] = "images"
+            await update.effective_message.reply_text(
+                "✅ Questions saved.\n\n"
+                "Do you want to add images to the questions?\n"
+                "If yes, send an image with the **question number** as the caption (e.g., caption `1` for the first question).\n\n"
+                "Send /no_images when you are finished adding images or to skip this step."
+            )
+            return
+
+        parsed = parse_format2_enhanced(text)
+        if not parsed:
+            await update.effective_message.reply_text("❌ Could not parse the question. Make sure it exactly matches the required format (numbered, (a) options, and one ✅).")
+            return
+        state["questions"].extend(parsed)
+        await update.effective_message.reply_text(f"✅ Saved {len(parsed)} question(s). Total so far: {len(state['questions'])}. Send next or /done.")
+        return
+
+    # State: Images
+    if state["step"] == "images":
+        if text == "/no_images":
+            creator = get_or_create_creator_by_tg(update.effective_user)
+            quiz_id = generate_quiz_id()
+            db_execute("INSERT INTO quizzes (id, title, creator_id, total_time_min, time_per_question_sec, negative_mark, created_at) VALUES (?,?,?,?,?,?,?)",
+                             (quiz_id, state["title"], creator["id"], 0, state.get("time_per_question_sec", 30), state.get("negative", 0.0), datetime.utcnow().isoformat()))
+            for idx, q in enumerate(state["questions"]):
+                db_execute("INSERT INTO questions (quiz_id, idx, q_json) VALUES (?,?,?)", (quiz_id, idx, questions_to_json(q)))
+            del ongoing_sessions[key]
+            await update.effective_message.reply_text(f"✅ Quiz created with id `{quiz_id}` (time per question: {state.get('time_per_question_sec')}s, negative: {state.get('negative')})", parse_mode=ParseMode.MARKDOWN)
+        else:
+            await update.effective_message.reply_text("Please send an image with a question number as the caption, or send /no_images to finish creating the quiz.")
+        return
+
+async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    if not msg or not msg.photo:
+        return
+    uid = update.effective_user.id
+    key = (uid, "create")
+
+    if key in ongoing_sessions and ongoing_sessions[key].get("step") == "images":
+        state = ongoing_sessions[key]
+        caption = (msg.caption or "").strip()
+        if not caption.isdigit():
+            await msg.reply_text("❌ Invalid caption. Please send a valid question number (e.g., '1', '2', etc.).")
+            return
+        
+        q_num = int(caption)
+        if not (1 <= q_num <= len(state.get("questions", []))):
+            await msg.reply_text(f"❌ Question number out of range. You have {len(state.get('questions',[]))} questions. Please provide a number between 1 and {len(state.get('questions',[]))}.")
+            return
+        
+        file_id = msg.photo[-1].file_id
+        state["questions"][q_num - 1]["image_file_id"] = file_id
+        await msg.reply_text(f"✅ Image saved for question {q_num}. Send more images or /no_images to finish.")
+
+async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    if not msg or not msg.document:
+        return
+    uid = update.effective_user.id
+    create_key = (uid, "create")
+    
+    # Handle .txt or .csv file upload during the /create flow
+    if create_key in ongoing_sessions and ongoing_sessions[create_key].get("step") == "questions":
+        file_obj = await msg.document.get_file()
+        path = await file_obj.download_to_drive()
+        
+        fname = (msg.document.file_name or "").lower()
+        try:
+            if fname.endswith(".txt"):
+                with open(path, "r", encoding="utf-8-sig", errors="ignore") as f:
+                    data = f.read()
+                parsed = detect_and_parse_strict(data)
+                if not parsed:
+                    await msg.reply_text("❌ The .txt file did not match any of the required formats or was invalid. Please fix and resend.")
+                    return
+                ongoing_sessions[create_key].setdefault("questions", []).extend(parsed)
+                await msg.reply_text(f"✅ Imported {len(parsed)} questions from the file. Total so far: {len(ongoing_sessions[create_key]['questions'])}. Send more or /done.")
+                return
+            elif fname.endswith(".csv"):
+                parsed = parse_csv(path)
+                if not parsed:
+                    await msg.reply_text("❌ CSV parsing failed.")
+                    return
+                ongoing_sessions[create_key].setdefault("questions", []).extend(parsed)
+                await msg.reply_text(f"✅ Imported {len(parsed)} questions from CSV. Total so far: {len(ongoing_sessions[create_key]['questions'])}. Send more or /done.")
+                return
+        finally:
+            try:
+                os.remove(path)
+            except:
+                pass
+        return
+
+    # Handle standalone .csv file upload to create a quiz directly
+    file_obj = await msg.document.get_file()
+    path = await file_obj.download_to_drive()
+    
+    fname = (msg.document.file_name or "").lower()
+    creator = get_or_create_creator_by_tg(update.effective_user)
+    try:
+        if fname.endswith(".csv"):
+            parsed = parse_csv(path)
+            if not parsed:
+                await msg.reply_text(f"❌ Failed to parse {fname}: CSV format error or empty.")
+                return
+            title = os.path.splitext(os.path.basename(fname))[0]
+            quiz_id = generate_quiz_id()
+            db_execute("INSERT INTO quizzes (id, title, creator_id, total_time_min, time_per_question_sec, negative_mark, created_at) VALUES (?,?,?,?,?,?,?)",
+                                (quiz_id, title, creator["id"], 0, 30, 0.0, datetime.utcnow().isoformat()))
+            for idx, q in enumerate(parsed):
+                db_execute("INSERT INTO questions (quiz_id, idx, q_json) VALUES (?,?,?)", (quiz_id, idx, questions_to_json(q)))
+            await msg.reply_text(f"✅ CSV Upload: Created 1 quiz ({title}) with {len(parsed)} questions. ID: `{quiz_id}`")
+            return
+    except Exception as e:
+        await msg.reply_text(f"❌ Error processing document: {e}")
+    finally:
+        try:
+            os.remove(path)
+        except:
+            pass
+
+async def myquizzes_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    c = get_creator_by_tg(uid)
+    if not c:
+        await update.effective_message.reply_text("You haven't created any quizzes yet. Use /create to start.")
+        return
+    cur = db_execute("SELECT * FROM quizzes WHERE creator_id = ? ORDER BY created_at DESC", (c["id"],), commit=False)
+    rows = cur.fetchall()
+    if not rows:
+        await update.effective_message.reply_text("You have no quizzes yet.")
+        return
+    text_lines = []
+    kb = []
+    for r in rows:
+        tp = r['time_per_question_sec'] or '-'
+        text_lines.append(f"ID: {r['id']} | {r['title']} | Time/q: {tp}s | Neg: {r['negative_mark']}")
+        kb.append([InlineKeyboardButton(f"{r['id']}: {r['title']}", callback_data=f"viewquiz:{r['id']}")])
+    await update.effective_message.reply_text("\n".join(text_lines), reply_markup=InlineKeyboardMarkup(kb))
+
+# --- CALLBACK QUERY HANDLERS ---
+async def view_quiz_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    quiz_id = query.data.split(":")[1]
+    qrow = db_execute("SELECT * FROM quizzes WHERE id = ?", (quiz_id,), commit=False).fetchone()
+    if not qrow:
+        await query.answer("Quiz not found", show_alert=True); return
+    creator = db_execute("SELECT * FROM creators WHERE id = ?", (qrow["creator_id"],), commit=False).fetchone()
+    qs_cur = db_execute("SELECT * FROM questions WHERE quiz_id = ? ORDER BY idx", (quiz_id,), commit=False)
+    qrows = qs_cur.fetchall()
+    preview = []
+    for i, qr in enumerate(qrows[:10], start=1):
+        qobj = questions_from_json(qr["q_json"])
+        preview.append(f"{i}. {qobj.get('text','')}\n  a) {qobj.get('options',[None])[0] if qobj.get('options') else ''}")
+    txt = (f"Quiz ID: {quiz_id}\nTitle: {qrow['title']}\n"
+           f"Creator: {creator['username'] or creator['display_name']}\nQuestions: {len(qrows)}\n\nPreview:\n" + "\n".join(preview))
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Delete", callback_data=f"deletequiz:{quiz_id}"), InlineKeyboardButton("Export", callback_data=f"exportquiz:{quiz_id}")],
+        [InlineKeyboardButton("Share (post card)", callback_data=f"postcard:{quiz_id}")]
+    ])
+    await query.message.reply_text(txt, reply_markup=kb)
+
+async def delete_quiz_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    uid = query.from_user.id
+    quiz_id = query.data.split(":")[1]
+    q = db_execute("SELECT * FROM quizzes WHERE id = ?", (quiz_id,), commit=False).fetchone()
+    if not q:
+        await query.answer("Not found", show_alert=True); return
+    creator = get_creator_by_tg(uid)
+    if not creator or (creator["is_admin"] != 1 and creator["id"] != q["creator_id"]):
+        await query.answer("No permission", show_alert=True); return
+    db_execute("DELETE FROM questions WHERE quiz_id = ?", (quiz_id,))
+    db_execute("DELETE FROM quizzes WHERE id = ?", (quiz_id,))
+    await query.answer("Deleted", show_alert=True)
+    await query.message.reply_text(f"✅ Quiz {quiz_id} deleted.")
+
+async def export_quiz_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    quiz_id = query.data.split(":")[1]
+    qs_cur = db_execute("SELECT * FROM questions WHERE quiz_id = ? ORDER BY idx", (quiz_id,), commit=False)
+    qrows = qs_cur.fetchall()
+    if not qrows:
+        await query.answer("No questions", show_alert=True); return
+    lines = []
+    for i, qr in enumerate(qrows, start=1):
+        qobj = questions_from_json(qr["q_json"])
+        lines.append(f"{i}. {qobj.get('text','')}")
+        for opt_idx, opt in enumerate(qobj.get("options", [])):
+            mark = " ✅" if opt_idx == qobj.get("correctIndex", -1) else ""
+            lines.append(f"({chr(97+opt_idx)}) {opt}{mark}")
+        if qobj.get("explanation"):
+            lines.append(f"Ex: {qobj.get('explanation')}")
+        lines.append("")
+    content = "\n".join(lines)
+    bio = io.BytesIO(content.encode("utf-8"))
+    bio.name = f"quiz_{quiz_id}.txt"
+    await query.message.reply_document(bio, caption=f"Exported quiz {quiz_id}")
+
+async def postcard_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    quiz_id = query.data.split(":")[1]
+    await post_quiz_card(context.bot, query.message.chat.id, quiz_id)
+
+async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = update.effective_message.text.split()
+    if len(args) < 2:
+        await update.effective_message.reply_text("Usage: /post <quiz_id>")
+        return
+    quiz_id = args[1]
+    await post_quiz_card(context.bot, update.effective_chat.id, quiz_id)
+
+async def post_quiz_card(bot, chat_id, quiz_id):
+    qrow = db_execute("SELECT * FROM quizzes WHERE id = ?", (quiz_id,), commit=False).fetchone()
+    if not qrow:
+        try:
+            await bot.send_message(chat_id, "Quiz not found.")
+        except:
+            pass
+        return
+    qs_cur = db_execute("SELECT COUNT(*) as cnt FROM questions WHERE quiz_id = ?", (quiz_id,), commit=False)
+    total_q = qs_cur.fetchone()["cnt"]
+    title = qrow["title"] or f"Quiz {quiz_id}"
+    time_per_q = qrow['time_per_question_sec'] or 30
+    negative_marking = qrow['negative_mark']
+    base_lines = [
+        f"💳 Quiz Name: `{title}`",
+        f"#️⃣ Questions: {total_q}",
+        f"⏰ Timer: {time_per_q} seconds",
+        f"🆔 Quiz ID: `{quiz_id}`",
+        f"🏴‍☠️ -ve Marking: {negative_marking}",
+        "💰 Type: free"
+    ]
+    creator_mention_line = ""
+    if qrow['creator_id']:
+        creator_row = db_execute("SELECT * FROM creators WHERE id = ?", (qrow['creator_id'],), commit=False).fetchone()
+        if creator_row:
+            if creator_row['username']:
+                creator_mention_line = f"Created by: @{creator_row['username']}"
+            elif creator_row['display_name']:
+                 creator_mention_line = f"Created by: {creator_row['display_name']}"
+    if creator_mention_line:
+        base_lines.append(creator_mention_line)
+    base_lines.append("\nTap start to play!")
+    text = "\n".join(base_lines)
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Start this quiz (in this chat)", callback_data=f"startgroup:{quiz_id}")],
+        [InlineKeyboardButton("Start in private", callback_data=f"startprivate:{quiz_id}")]
+    ])
+    await bot.send_message(chat_id, text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
+
+async def start_private_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer("Starting quiz in private...")
+    quiz_id = query.data.split(":")[1]
+    uid = query.from_user.id
+    try:
+        await context.bot.send_message(uid, "Starting quiz in private for you...")
+        await take_quiz_private(context.bot, uid, quiz_id)
+    except Exception as e:
+        await query.message.reply_text(f"❌ Failed to start in private: {e}")
+
+async def start_group_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer("Starting quiz in this chat...")
+    quiz_id = query.data.split(":")[1]
+    chat_id = query.message.chat.id
+    await start_quiz_in_group(context.bot, chat_id, quiz_id, starter_id=query.from_user.id)
+
+# --- PRIVATE QUIZ LOGIC ---
+async def take_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = update.effective_message.text.split()
+    if len(args) < 2:
+        await update.effective_message.reply_text("Usage: /take <quiz_id>"); return
+    quiz_id = args[1]
+    await take_quiz_private(context.bot, update.effective_user.id, quiz_id)
+
+async def take_quiz_private(bot, user_id, quiz_id):
+    qrow = db_execute("SELECT * FROM quizzes WHERE id = ?", (quiz_id,), commit=False).fetchone()
+    if not qrow:
+        try:
+            await bot.send_message(user_id, "Quiz not found.")
+        except:
+            pass
+        return
+    qs_cur = db_execute("SELECT * FROM questions WHERE quiz_id = ? ORDER BY idx", (quiz_id,), commit=False)
+    qrows = qs_cur.fetchall()
+    if not qrows:
+        try:
+            await bot.send_message(user_id, "No questions in quiz.")
+        except:
+            pass
+        return
+    questions = [questions_from_json(qr["q_json"]) for qr in qrows]
+    username = ""  
+    started_at = datetime.utcnow().isoformat()
+    cur = db_execute("INSERT INTO attempts (quiz_id, user_id, username, started_at) VALUES (?,?,?,?)",
+                    (quiz_id, user_id, username, started_at))
+    attempt_id = cur.lastrowid
+    session = {
+        "quiz_id": quiz_id,
+        "user_id": user_id,
+        "attempt_id": attempt_id,
+        "questions": questions,
+        "answers": [-1]*len(questions),
+        "current_q": 0,
+        "started_at": datetime.utcnow(),
+        "time_per_question_sec": int(qrow["time_per_question_sec"] or 30),
+        "message_id": None,
+        "chat_id": user_id,
+    }
+    session_key = (user_id, attempt_id)
+    session_path = get_private_session_path(user_id, attempt_id)
+    lock = get_private_lock(session_key)
+    await write_session_file(session_path, session, lock)
+    try:
+        await bot.send_message(user_id, f"✅ Quiz started: {qrow['title']}\nTime per question: {session['time_per_question_sec']} seconds.\nAnswer by tapping an option.")
+    except:
+        pass
+    await send_question_for_session_private(bot, session_key)
+
+async def send_question_for_session_private(bot, session_key):
+    path = get_private_session_path(*session_key)
+    lock = get_private_lock(session_key)
+    session = await read_session_file(path, lock)
+    if not session:
+        return
+    qidx = session["current_q"]
+    if qidx < 0 or qidx >= len(session["questions"]):
+        await finalize_attempt(bot, session_key, session)
+        return
+    q = session["questions"][qidx]
+
+    # Send image if it exists
+    image_file_id = q.get("image_file_id")
+    if image_file_id:
+        try:
+            await bot.send_photo(chat_id=session["chat_id"], photo=image_file_id)
+        except Exception as e:
+            print(f"Failed to send photo for private quiz (will continue): {e}")
+
+    explanation = q.get("explanation") or None
+    sent = None
+    for attempt in range(3): # Retry up to 3 times
+        try:
+            sent = await bot.send_poll(
+                chat_id=session["chat_id"],
+                question=q.get("text"),
+                options=q.get("options"),
+                type=Poll.QUIZ,
+                correct_option_id=q.get("correctIndex", 0),
+                open_period=session["time_per_question_sec"],
+                is_anonymous=False,
+                explanation=explanation
+            )
+            break # Success, break the loop
+        except Exception as e:
+            print(f"Attempt {attempt + 1} failed to send private poll: {e}")
+            if attempt < 2: # If not the last attempt
+                await asyncio.sleep(2) # Wait before retrying
+            else: # Last attempt failed
+                print("All retries failed for private poll. Finalizing quiz.")
+                await finalize_attempt(bot, session_key, session)
+                return
+
+    if not sent: # Should not be reached if the above logic is correct, but as a safeguard
+        return
+
+    session['poll_id'] = sent.poll.id
+    session['message_id'] = sent.message_id if hasattr(sent, 'message_id') else None
+    POLL_ID_TO_SESSION_MAP[sent.poll.id] = {"type": "private", "key": session_key}
+    await write_session_file(path, session, lock)
+
+# --- POLL HANDLERS ---
+async def poll_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    answer = update.poll_answer
+    user = answer.user
+    user_id = user.id
+    poll_id = answer.poll_id
+    option_ids = answer.option_ids
+    if not option_ids:
+        return
+    chosen = option_ids[0]
+
+    mapping = POLL_ID_TO_SESSION_MAP.get(poll_id)
+    if not mapping:
+        return
+
+    session_type = mapping.get("type")
+    session_key = mapping.get("key")
+
+    if session_type == "private":
+        try:
+            user_id_key, attempt_id = session_key
+            if user_id_key != user_id:
+                 return
+            
+            lock = get_private_lock(session_key)
+            session_path = get_private_session_path(user_id, attempt_id)
+            session = await read_session_file(session_path, lock)
+            
+            if not session:
+                return
+            qidx = session["current_q"]
+            if qidx < 0 or qidx >= len(session["questions"]):
+                return
+            if session["answers"][qidx] != -1:
+                return
+            
+            session["answers"][qidx] = chosen
+            await write_session_file(session_path, session, lock)
+            
+            await reveal_correct_and_advance_private(context.bot, session_key, qidx, chosen_idx=chosen)
+        except Exception as e:
+            print(f"Error handling private poll answer: {e}")
+            traceback.print_exc()
+        return
+
+    elif session_type == "group":
+        try:
+            chat_id, quiz_id = session_key
+            lock = get_group_lock(session_key)
+            session_path = get_group_session_path(chat_id, quiz_id)
+            session = await read_session_file(session_path, lock)
+
+            if not session:
+                return
+            qidx = session["current_q"]
+            if qidx < 0 or qidx >= len(session["questions"]):
+                return
+
+            p_data = session["participants"].get(str(user_id))
+            if p_data is None:
+                user_full_name = ((user.first_name or "") + " " + (user.last_name or "")).strip()
+                p_data = {
+                    "answers": [-1] * len(session["questions"]),
+                    "start_time": time.time(),
+                    "username": user_full_name or str(user_id)
+                }
+                session["participants"][str(user_id)] = p_data
+            
+            if p_data["answers"][qidx] != -1:
+                return
+            
+            p_data["answers"][qidx] = chosen
+            p_data["end_time"] = time.time()
+            await write_session_file(session_path, session, lock)
+        except Exception as e:
+            print(f"Error handling group poll answer: {e}")
+            traceback.print_exc()
+        return
+
+async def poll_update_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    poll = update.poll
+    if not poll.is_closed:
+        return
+    
+    mapping = POLL_ID_TO_SESSION_MAP.get(poll.id)
+    if not mapping or mapping.get("type") != "private":
+        return
+
+    session_key = mapping.get("key")
+    if not session_key:
+        return
+
+    path = get_private_session_path(*session_key)
+    lock = get_private_lock(session_key)
+    session = await read_session_file(path, lock)
+
+    if not session:
+        return
+
+    if session.get("poll_id") == poll.id:
+        await reveal_correct_and_advance_private(context.bot, session_key, session["current_q"], timed_out=True)
+
+# --- ADVANCEMENT & FINALIZATION LOGIC ---
+async def reveal_correct_and_advance_private(bot, session_key, qidx, chosen_idx=None, timed_out=False):
+    path = get_private_session_path(*session_key)
+    lock = get_private_lock(session_key)
+    session = await read_session_file(path, lock)
+    if not session:
+        return
+    
+    if session.get("poll_id"):
+        POLL_ID_TO_SESSION_MAP.pop(session["poll_id"], None)
+
+    session["current_q"] += 1
+    await write_session_file(path, session, lock)
+    
+    if session["current_q"] >= len(session["questions"]):
+        await finalize_attempt(bot, session_key, session)
+        return
+        
+    await send_question_for_session_private(bot, session_key)
+
+async def finalize_attempt(bot, session_key, session_data):
+    total = 0.0
+    maxscore = len(session_data["questions"])
+    quiz_row = db_execute("SELECT * FROM quizzes WHERE id = ?", (session_data["quiz_id"],), commit=False).fetchone()
+    negative = quiz_row["negative_mark"] if quiz_row else 0.0
+    for idx, q in enumerate(session_data["questions"]):
+        correct = q.get("correctIndex", -1)
+        ans = session_data["answers"][idx]
+        if ans == correct and correct != -1:
+            total += 1.0
+        elif ans != -1 and correct != -1:
+            total -= negative
+    if total < 0: total = 0.0
+    finished_at = datetime.utcnow().isoformat()
+    db_execute("UPDATE attempts SET finished_at=?, answers_json=?, score=?, max_score=? WHERE id=?",
+               (finished_at, json.dumps(session_data["answers"]), total, maxscore, session_data["attempt_id"]))
+    try:
+        await bot.send_message(session_data["user_id"], f" ✅ Quiz finished! Your score: {total}/{maxscore}")
+    except:
+        pass
+    path = get_private_session_path(*session_key)
+    await delete_session_file(path, session_key, private_session_locks)
+
+async def finish_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    user_id = update.effective_user.id
+    
+    if chat.type == 'private':
+        active_sessions = glob.glob(os.path.join(SESSION_DIR, f"private_{user_id}_*.json"))
+        if not active_sessions:
+            await update.effective_message.reply_text("You have no active quiz to finish.")
+            return
+        session_path = active_sessions[0]
+        filename = os.path.basename(session_path)
+        try:
+            parts = filename.replace("private_", "").replace(".json", "").split("_")
+            uid = int(parts[0])
+            attempt_id = int(parts[1])
+            session_key = (uid, attempt_id)
+        except Exception:
+            await update.effective_message.reply_text("Error identifying your session file. Could not finish.")
+            if os.path.exists(session_path): os.remove(session_path)
+            return
+        
+        lock = get_private_lock(session_key)
+        session_data = await read_session_file(session_path, lock)
+        if not session_data:
+            await update.effective_message.reply_text("Could not read your session data. Cleaning up.")
+            await delete_session_file(session_path, session_key, private_session_locks)
+            return
+        
+        await update.effective_message.reply_text("Finishing your quiz now and calculating results...")
+        await finalize_attempt(context.bot, session_key, session_data)
+        
+    else: # Group chat
+        args = context.args
+        if not args:
+            await update.effective_message.reply_text(
+                "In a group, you must specify which quiz to finish.\n"
+                "Usage: `/finish <quiz_id>`\n"
+                "(Only admins or the quiz starter can do this.)"
+            )
+            return
+            
+        quiz_id = args[0]
+        chat_id = chat.id
+        session_key = (chat_id, quiz_id)
+        session_path = get_group_session_path(chat_id, quiz_id)
+
+        if not os.path.exists(session_path):
+            await update.effective_message.reply_text(f"No active quiz found in this chat with ID: `{quiz_id}`", parse_mode=ParseMode.MARKDOWN)
+            return
+
+        try:
+            admins = await context.bot.get_chat_administrators(chat_id)
+            admin_ids = {admin.user.id for admin in admins}
+        except Exception:
+            admin_ids = set()
+
+        lock = get_group_lock(session_key)
+        session_data = await read_session_file(session_path, lock)
+        starter_id = session_data.get("starter_id") if session_data else None
+        
+        if user_id == starter_id or user_id in admin_ids or user_id == OWNER_ID:
+            await update.effective_message.reply_text(f"Force-finishing quiz `{quiz_id}` and calculating results...", parse_mode=ParseMode.MARKDOWN)
+            await group_finalize_and_export(context.bot, session_key)
+        else:
+            await update.effective_message.reply_text("You do not have permission. Only chat admins or the person who started the quiz can finish it.")
+
+# --- GROUP QUIZ LOGIC ---
+async def start_quiz_in_group(bot, chat_id: int, quiz_id: str, starter_id: int = None):
+    qrow = db_execute("SELECT * FROM quizzes WHERE id = ?", (quiz_id,), commit=False).fetchone()
+    if not qrow:
+        try:
+            await bot.send_message(chat_id, "Quiz not found.")
+        except:
+            pass
+        return
+    qs_cur = db_execute("SELECT * FROM questions WHERE quiz_id = ? ORDER BY idx", (quiz_id,), commit=False)
+    qrows = qs_cur.fetchall()
+    if not qrows:
+        try:
+            await bot.send_message(chat_id, "No questions in quiz.")
+        except:
+            pass
+        return
+    questions = [questions_from_json(qr["q_json"]) for qr in qrows]
+    session_key = (chat_id, quiz_id)
+    session_path = get_group_session_path(*session_key)
+    if os.path.exists(session_path):
+        await bot.send_message(chat_id, f"A quiz with this ID (`{quiz_id}`) is already running. Use `/finish {quiz_id}` to stop it before starting a new one.")
+        return
+    session = {
+        "quiz_id": quiz_id,
+        "chat_id": chat_id,
+        "questions": questions,
+        "current_q": 0,
+        "time_per_question_sec": int(qrow["time_per_question_sec"] or 30),
+        "participants": {},
+        "message_id": None,
+        "starter_id": starter_id,
+        "negative": float(qrow["negative_mark"] or 0.0),
+        "title": qrow["title"]
+    }
+    lock = get_group_lock(session_key)
+    await write_session_file(session_path, session, lock)
+    await bot.send_message(chat_id, f"🎯 Quiz starting now: *{qrow['title']}*\nTime per question: {session['time_per_question_sec']}s\nEveryone can answer using the quiz options. Results will be shown at the end.", parse_mode=ParseMode.MARKDOWN)
+    await group_send_question(bot, session_key)
+
+async def group_send_question(bot, session_key):
+    path = get_group_session_path(*session_key)
+    lock = get_group_lock(session_key)
+    session = await read_session_file(path, lock)
+    if not session:
+        return
+    qidx = session["current_q"]
+    if qidx < 0 or qidx >= len(session["questions"]):
+        await group_finalize_and_export(bot, session_key)
+        return
+    q = session["questions"][qidx]
+    
+    # Send image if it exists
+    image_file_id = q.get("image_file_id")
+    if image_file_id:
+        try:
+            await bot.send_photo(chat_id=session["chat_id"], photo=image_file_id)
+        except Exception as e:
+            print(f"Failed to send photo for group quiz (will continue): {e}")
+
+    explanation = q.get("explanation") or None
+    sent = None
+    for attempt in range(3): # Retry up to 3 times
+        try:
+            sent = await bot.send_poll(
+                chat_id=session["chat_id"],
+                question=q.get("text"),
+                options=q.get("options"),
+                type=Poll.QUIZ,
+                correct_option_id=q.get("correctIndex", 0),
+                open_period=session["time_per_question_sec"],
+                is_anonymous=False,
+                explanation=explanation
+            )
+            break # Success
+        except Exception as e:
+            print(f"Attempt {attempt + 1} failed to send group poll: {e}")
+            if attempt < 2:
+                await asyncio.sleep(2)
+            else:
+                print("All retries failed for group poll. Finalizing quiz.")
+                await group_finalize_and_export(bot, session_key)
+                return
+    
+    if not sent: # Should not be reached, but as a safeguard
+        return
+
+    session["poll_id"] = sent.poll.id
+    session["message_id"] = sent.message_id if hasattr(sent, 'message_id') else None
+    POLL_ID_TO_SESSION_MAP[sent.poll.id] = {"type": "group", "key": session_key}
+    await write_session_file(path, session, lock)
+    
+    old_task = running_group_tasks.pop(session_key, None)
+    if old_task:
+        old_task.cancel()
+    async def per_question_timeout():
+        try:
+            await asyncio.sleep(session["time_per_question_sec"] + 2)
+            fresh_session = await read_session_file(path, lock)
+            if fresh_session and fresh_session["current_q"] == qidx:
+                await group_reveal_and_advance(bot, session_key, qidx, timed_out=True)
+        except asyncio.CancelledError:
+            pass
+    running_group_tasks[session_key] = asyncio.create_task(per_question_timeout())
+
+async def group_reveal_and_advance(bot, session_key, qidx, timed_out=False):
+    path = get_group_session_path(*session_key)
+    lock = get_group_lock(session_key)
+    session = await read_session_file(path, lock)
+    if not session:
+        return
+    
+    if session.get("poll_id"):
+        POLL_ID_TO_SESSION_MAP.pop(session["poll_id"], None)
+
+    session["current_q"] += 1
+    await write_session_file(path, session, lock)
+    if session["current_q"] >= len(session["questions"]):
+        await group_finalize_and_export(bot, session_key)
+        return
+    await group_send_question(bot, session_key)
+
+async def group_finalize_and_export(bot, session_key):
+    path = get_group_session_path(*session_key)
+    lock = get_group_lock(session_key)
+    session = await read_session_file(path, lock)
+    if not session:
+        return
+    chat_id, quiz_id = session_key
+    def format_duration(seconds):
+        if seconds < 0: seconds = 0
+        minutes, seconds_rem = divmod(int(seconds), 60)
+        return f"{minutes} min {seconds_rem} sec"
+    participants = session["participants"]
+    results = []
+    negative = float(session.get("negative", 0.0))
+    total_questions = len(session['questions'])
+    for user_id_str, p_data in participants.items():
+        score = 0.0
+        for idx, ans in enumerate(p_data["answers"]):
+            if idx >= len(session["questions"]): continue
+            correct = session["questions"][idx].get("correctIndex", -1)
+            if correct == -1: continue
+            if ans == correct:
+                score += 1.0
+            elif ans != -1:
+                score -= negative
+        if score < 0: score = 0.0
+        duration = p_data.get("end_time", p_data.get("start_time", 0)) - p_data.get("start_time", 0)
+        results.append({
+            "name": p_data.get("username", str(user_id_str)),
+            "score": score,
+            "duration": duration
+        })
+    results.sort(key=lambda x: (x["score"], -x["duration"]), reverse=True)
+    quiz_title = session.get("title", f"Quiz {quiz_id}")
+    msg_lines = [f"🏁 The quiz '{quiz_title}' has finished!", f"\n{total_questions} questions answered\n"]
+    medals = ["🥇", "🥈", "🥉"]
+    if not results:
+        msg_lines.append("No one participated in the quiz.")
+    else:
+        for i, res in enumerate(results):
+            prefix = medals[i] if i < len(medals) else f"{i + 1}."
+            score = res['score']
+            score_text = str(int(score)) if score == int(score) else f"{score:.2f}"
+            line = f"{prefix} {res['name']} – {score_text} ({format_duration(res['duration'])})"
+            msg_lines.append(line)
+        msg_lines.append("\n🏆 Congratulations to the winners!")
+    final_message = "\n".join(msg_lines)
+    try:
+        await bot.send_message(chat_id, final_message)
+    except Exception as e:
+        print(f"Error sending final group results: {e}")
+    
+    await delete_session_file(path, session_key, group_session_locks, running_group_tasks)
+
+# --- MAIN BOT SETUP ---
+def main():
+    app = Application.builder().token(BOT_TOKEN).build()
+    
+    # Command Handlers
+    app.add_handler(CommandHandler(["start", "help"], start_handler))
+    app.add_handler(CommandHandler("create", create_command))
+    app.add_handler(CommandHandler("myquizzes", myquizzes_handler))
+    app.add_handler(CommandHandler("take", take_handler))
+    app.add_handler(CommandHandler("post", post_command))
+    app.add_handler(CommandHandler("finish", finish_command_handler))
+    
+    # Message Handlers
+    app.add_handler(MessageHandler(filters.Document.ALL, document_handler))
+    app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, photo_handler)) # For quiz images
+    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, create_flow_handler))
+    
+    # Callback Query Handlers
+    app.add_handler(CallbackQueryHandler(view_quiz_cb, pattern=r"^viewquiz:"))
+    app.add_handler(CallbackQueryHandler(delete_quiz_cb, pattern=r"^deletequiz:"))
+    app.add_handler(CallbackQueryHandler(export_quiz_cb, pattern=r"^exportquiz:"))
+    app.add_handler(CallbackQueryHandler(postcard_cb, pattern=r"^postcard:"))
+    app.add_handler(CallbackQueryHandler(start_private_cb, pattern=r"^startprivate:"))
+    app.add_handler(CallbackQueryHandler(start_group_cb, pattern=r"^startgroup:"))
+    
+    # Poll Handlers
+    app.add_handler(PollAnswerHandler(poll_answer_handler))
+    app.add_handler(PollHandler(poll_update_handler))
+    
+    print("Starting PTB Quiz Bot...")
+    app.run_polling()
+
 if __name__ == "__main__":
-    init_db()
-    print("Bot started...")
-    app.run()
-    idle()
+    main()
