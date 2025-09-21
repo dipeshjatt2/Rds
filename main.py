@@ -1704,7 +1704,7 @@ async def poll_message_handler(client, message: Message):
 async def fetch(session, url):
     """Performs an asynchronous GET request."""
     try:
-        async with session.get(url, timeout=20) get as response:
+        async with session.get(url, timeout=20) as response:
             if response.status == 200:
                 return await response.text()
     except Exception as e:
