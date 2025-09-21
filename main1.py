@@ -12,6 +12,8 @@ import traceback
 import string
 import glob
 import shutil
+import tempfile
+import pytz
 from functools import wraps
 from datetime import datetime, timedelta
 from typing import Dict, Tuple, Any
@@ -31,6 +33,7 @@ from telegram.ext import (
     PollAnswerHandler,
     PollHandler,
     filters,
+    JobQueue,
 )
 from telegram.constants import ParseMode
 
@@ -88,6 +91,16 @@ def init_db():
         score REAL,
         max_score REAL,
         FOREIGN KEY(quiz_id) REFERENCES quizzes(id)
+    )""")
+    # New table for scheduled quizzes
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS schedule (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id INTEGER,
+        quiz_id TEXT,
+        creator_id INTEGER,
+        scheduled_time_utc TEXT,
+        status TEXT DEFAULT 'pending' -- pending, triggered, error
     )""")
     con.commit()
     try:
@@ -489,6 +502,14 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     fullname = ((user.first_name or "") + " " + (user.last_name or "")).strip()
     if OWNER_ID == 0:
         ensure_owner_exists(uid, uname, fullname)
+    
+    is_owner = uid == OWNER_ID
+    owner_commands = (
+        "\n\n👑 **Owner Commands:**\n"
+        "• /backup - Create a backup of the DB and images\n"
+        "• /restore - Restore from a backup file (reply to file)"
+    ) if is_owner else ""
+
     text = (
         "👋 **Welcome to QuizMaster Bot!**\n\n"
         "Available commands:\n"
@@ -496,9 +517,11 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /myquizzes - List quizzes you created\n"
         "• /take <quiz_id> - Start a timed quiz (private)\n"
         "• /post <quiz_id> - Post/share a quiz card into the chat\n"
+        "• /schedule <quiz_id> - Schedule a quiz to run in a group\n"
         "• /finish - Finish your active private quiz early\n"
         "• /finish <quiz_id> - (In groups) Finish a specific quiz (admins only)\n\n"
         "Create and play quizzes using Telegram’s built-in quiz polls."
+        f"{owner_commands}"
     )
     await update.effective_message.reply_text(text)
 
@@ -1337,6 +1360,263 @@ async def group_finalize_and_export(bot, session_key):
     
     await delete_session_file(path, session_key, group_session_locks, running_group_tasks)
 
+# --- BACKUP & RESTORE ---
+async def backup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != OWNER_ID:
+        return
+    msg = await update.effective_message.reply_text("Starting backup process...")
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        try:
+            # 1. Copy database
+            shutil.copy(DB_PATH, os.path.join(tmpdir, "quizzes.db"))
+
+            # 2. Get all unique image file_ids
+            q_rows = db_execute("SELECT q_json FROM questions WHERE q_json LIKE '%image_file_id%'", commit=False).fetchall()
+            unique_file_ids = set()
+            for row in q_rows:
+                q_obj = json.loads(row["q_json"])
+                if "image_file_id" in q_obj:
+                    unique_file_ids.add(q_obj["image_file_id"])
+
+            # 3. Download images and create map
+            image_map = {}
+            if unique_file_ids:
+                images_dir = os.path.join(tmpdir, "images")
+                os.makedirs(images_dir)
+                await msg.edit_text(f"Backing up database and {len(unique_file_ids)} images...")
+                for i, file_id in enumerate(unique_file_ids):
+                    try:
+                        file = await context.bot.get_file(file_id)
+                        filename = f"{i}.jpg"
+                        await file.download_to_drive(os.path.join(images_dir, filename))
+                        image_map[file_id] = filename
+                    except Exception as e:
+                        print(f"Could not download file_id {file_id}: {e}")
+
+            if image_map:
+                with open(os.path.join(tmpdir, "image_map.json"), "w") as f:
+                    json.dump(image_map, f)
+            
+            # 4. Create zip file
+            zip_filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            zip_path = shutil.make_archive(zip_filename, 'zip', tmpdir)
+
+            # 5. Send to owner
+            await update.effective_message.reply_document(
+                document=open(zip_path, "rb"),
+                caption="Here is your backup file."
+            )
+            await msg.delete()
+
+        except Exception as e:
+            await msg.edit_text(f"❌ Backup failed: {e}")
+            traceback.print_exc()
+        finally:
+            if 'zip_path' in locals() and os.path.exists(zip_path):
+                os.remove(zip_path)
+
+async def restore_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != OWNER_ID:
+        return
+    msg = update.effective_message
+    if not msg.reply_to_message or not msg.reply_to_message.document:
+        await msg.reply_text("Please use this command when replying to a backup `.zip` file.")
+        return
+    doc = msg.reply_to_message.document
+    if not doc.file_name.lower().endswith(".zip"):
+        await msg.reply_text("The replied file is not a `.zip` file.")
+        return
+    
+    status_msg = await msg.reply_text("Starting restore process... Do not interrupt.")
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        try:
+            # 1. Download and extract zip
+            zip_file = await doc.get_file()
+            zip_path = os.path.join(tmpdir, "backup.zip")
+            await zip_file.download_to_drive(zip_path)
+            
+            extract_dir = os.path.join(tmpdir, "extracted")
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(extract_dir)
+
+            # 2. Validate extracted files
+            restored_db_path = os.path.join(extract_dir, "quizzes.db")
+            if not os.path.exists(restored_db_path):
+                raise FileNotFoundError("`quizzes.db` not found in the backup.")
+
+            # 3. Backup current DB and replace
+            db.close() # Close current connection
+            if os.path.exists(DB_PATH):
+                shutil.move(DB_PATH, f"{DB_PATH}.{int(time.time())}.bak")
+            shutil.move(restored_db_path, DB_PATH)
+            
+            # Re-initialize global DB connection
+            global db
+            db = init_db()
+
+            await status_msg.edit_text("Database restored. Now re-uploading images...")
+            
+            # 4. Re-upload images and update DB
+            image_map_path = os.path.join(extract_dir, "image_map.json")
+            if os.path.exists(image_map_path):
+                with open(image_map_path, 'r') as f:
+                    image_map = json.load(f)
+                
+                new_id_map = {}
+                total_images = len(image_map)
+                for i, (old_id, filename) in enumerate(image_map.items()):
+                    await status_msg.edit_text(f"Re-uploading image {i+1}/{total_images}...")
+                    image_path = os.path.join(extract_dir, "images", filename)
+                    if os.path.exists(image_path):
+                        with open(image_path, "rb") as photo_file:
+                            sent_photo = await context.bot.send_photo(OWNER_ID, photo_file)
+                            new_id_map[old_id] = sent_photo.photo[-1].file_id
+
+                # Update questions in the new DB
+                if new_id_map:
+                    await status_msg.edit_text("Updating image references in the database...")
+                    q_rows = db_execute("SELECT id, q_json FROM questions WHERE q_json LIKE '%image_file_id%'", commit=False).fetchall()
+                    for q_row in q_rows:
+                        q_obj = json.loads(q_row['q_json'])
+                        if 'image_file_id' in q_obj and q_obj['image_file_id'] in new_id_map:
+                            q_obj['image_file_id'] = new_id_map[q_obj['image_file_id']]
+                            new_json = json.dumps(q_obj)
+                            db_execute("UPDATE questions SET q_json = ? WHERE id = ?", (new_json, q_row['id']))
+
+            await status_msg.edit_text("✅ Restore complete!")
+
+        except Exception as e:
+            await status_msg.edit_text(f"❌ Restore failed: {e}")
+            traceback.print_exc()
+
+# --- SCHEDULING ---
+async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    if chat.type == 'private':
+        await update.message.reply_text("Scheduling only works in groups.")
+        return
+    if not context.args:
+        await update.message.reply_text("Usage: `/schedule <quiz_id>`")
+        return
+    
+    quiz_id = context.args[0]
+    q_row = db_execute("SELECT id FROM quizzes WHERE id = ?", (quiz_id,), commit=False).fetchone()
+    if not q_row:
+        await update.message.reply_text(f"Quiz with ID `{quiz_id}` not found.", parse_mode=ParseMode.MARKDOWN)
+        return
+    
+    chat_id = chat.id
+    user_id = update.effective_user.id
+    key = (chat_id, user_id, "schedule")
+    ongoing_sessions[key] = {"quiz_id": quiz_id, "step": "time"}
+    await update.message.reply_text("Please provide the start time in **24-hour HH:MM format** (Indian Standard Time).", parse_mode=ParseMode.MARKDOWN)
+
+async def schedule_flow_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    if not chat or chat.type == 'private':
+        return
+    
+    user_id = update.effective_user.id
+    chat_id = chat.id
+    key = (chat_id, user_id, "schedule")
+
+    if key in ongoing_sessions:
+        state = ongoing_sessions[key]
+        if state.get("step") == "time":
+            time_str = update.message.text.strip()
+            try:
+                hour, minute = map(int, time_str.split(':'))
+                
+                IST = pytz.timezone('Asia/Kolkata')
+                now_ist = datetime.now(IST)
+                
+                scheduled_time_ist = now_ist.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                if scheduled_time_ist <= now_ist:
+                    scheduled_time_ist += timedelta(days=1)
+                
+                scheduled_time_utc = scheduled_time_ist.astimezone(pytz.utc)
+                quiz_id = state['quiz_id']
+                
+                # Save to DB
+                cur = db_execute("INSERT INTO schedule (chat_id, quiz_id, creator_id, scheduled_time_utc, status) VALUES (?, ?, ?, ?, 'pending')",
+                                 (chat_id, quiz_id, user_id, scheduled_time_utc.isoformat()))
+                schedule_id = cur.lastrowid
+                
+                # Schedule jobs
+                schedule_quiz_jobs(context.job_queue, schedule_id, chat_id, quiz_id, scheduled_time_utc)
+                
+                await update.message.reply_text(f"✅ Quiz `{quiz_id}` scheduled for {scheduled_time_ist.strftime('%Y-%m-%d %H:%M')} IST.")
+                
+            except ValueError:
+                await update.message.reply_text("Invalid time format. Please use HH:MM (e.g., 14:30).")
+            except Exception as e:
+                await update.message.reply_text(f"An error occurred: {e}")
+            finally:
+                del ongoing_sessions[key]
+
+def schedule_quiz_jobs(job_queue: JobQueue, schedule_id: int, chat_id: int, quiz_id: str, scheduled_time_utc: datetime):
+    now_utc = datetime.now(pytz.utc)
+
+    # Schedule Start Job
+    start_delta = (scheduled_time_utc - now_utc).total_seconds()
+    if start_delta > 0:
+        job_queue.run_once(
+            schedule_start_callback,
+            start_delta,
+            data={"chat_id": chat_id, "quiz_id": quiz_id, "schedule_id": schedule_id},
+            name=f"start_{schedule_id}"
+        )
+
+    # Schedule Alert Job (5 mins before)
+    alert_time_utc = scheduled_time_utc - timedelta(minutes=5)
+    alert_delta = (alert_time_utc - now_utc).total_seconds()
+    if alert_delta > 0:
+        job_queue.run_once(
+            schedule_alert_callback,
+            alert_delta,
+            data={"chat_id": chat_id, "quiz_id": quiz_id, "schedule_id": schedule_id},
+            name=f"alert_{schedule_id}"
+        )
+
+async def schedule_alert_callback(context: ContextTypes.DEFAULT_TYPE):
+    job = context.job
+    chat_id, quiz_id = job.data['chat_id'], job.data['quiz_id']
+    q_row = db_execute("SELECT title FROM quizzes WHERE id = ?", (quiz_id,), commit=False).fetchone()
+    title = q_row['title'] if q_row else quiz_id
+    await context.bot.send_message(chat_id, f"⏰ Reminder: Quiz '{title}' will start in 5 minutes!")
+
+async def schedule_start_callback(context: ContextTypes.DEFAULT_TYPE):
+    job = context.job
+    chat_id, quiz_id, schedule_id = job.data['chat_id'], job.data['quiz_id'], job.data['schedule_id']
+    
+    # Update status in DB
+    db_execute("UPDATE schedule SET status = 'triggered' WHERE id = ?", (schedule_id,))
+    
+    await start_quiz_in_group(context.bot, chat_id, quiz_id, starter_id=None)
+
+async def load_schedules_on_startup(application: Application):
+    """Reschedule pending jobs from the database when the bot starts."""
+    print("Loading pending schedules from database...")
+    job_queue = application.job_queue
+    cur = db_execute("SELECT * FROM schedule WHERE status = 'pending'", commit=False)
+    now_utc = datetime.now(pytz.utc)
+    count = 0
+    for row in cur.fetchall():
+        try:
+            scheduled_utc = datetime.fromisoformat(row['scheduled_time_utc']).replace(tzinfo=pytz.utc)
+            if scheduled_utc > now_utc:
+                schedule_quiz_jobs(job_queue, row['id'], row['chat_id'], row['quiz_id'], scheduled_utc)
+                count += 1
+            else:
+                # Mark past-due jobs as errored/missed
+                db_execute("UPDATE schedule SET status = 'missed' WHERE id = ?", (row['id'],))
+        except Exception as e:
+            print(f"Failed to load schedule {row['id']}: {e}")
+            db_execute("UPDATE schedule SET status = 'error' WHERE id = ?", (row['id'],))
+    print(f"Successfully re-scheduled {count} pending jobs.")
+
 # --- MAIN BOT SETUP ---
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
@@ -1348,12 +1628,16 @@ def main():
     app.add_handler(CommandHandler("take", take_handler))
     app.add_handler(CommandHandler("post", post_command))
     app.add_handler(CommandHandler("finish", finish_command_handler))
+    app.add_handler(CommandHandler("backup", backup_handler))
+    app.add_handler(CommandHandler("restore", restore_handler))
+    app.add_handler(CommandHandler("schedule", schedule_command))
     
     # Message Handlers
     app.add_handler(MessageHandler(filters.Document.ALL, document_handler))
     app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, photo_handler)) # For quiz images
-    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, create_flow_handler))
-    
+    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, create_flow_handler))
+    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, schedule_flow_handler))
+
     # Callback Query Handlers
     app.add_handler(CallbackQueryHandler(view_quiz_cb, pattern=r"^viewquiz:"))
     app.add_handler(CallbackQueryHandler(delete_quiz_cb, pattern=r"^deletequiz:"))
@@ -1366,6 +1650,9 @@ def main():
     app.add_handler(PollAnswerHandler(poll_answer_handler))
     app.add_handler(PollHandler(poll_update_handler))
     
+    # Load schedules on startup
+    app.post_init = load_schedules_on_startup
+
     print("Starting PTB Quiz Bot...")
     app.run_polling()
 
