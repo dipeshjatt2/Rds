@@ -1660,7 +1660,7 @@ async def done_command_handler(client, message: Message):
 
     # --- Create and send the document ---
     final_txt = "\n".join(out_lines).strip()
-    file_obj = io.BytesIO(final_txt.encode("utf-8"))
+    file_obj = io.BytesIO(final_txt.encode("utf-8-sig"))
     file_obj.name = f"collected_polls_from_{uid}.txt"
 
     await message.reply_document(
