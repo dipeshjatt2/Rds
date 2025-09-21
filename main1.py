@@ -531,6 +531,33 @@ async def create_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ongoing_sessions[(uid, "create")] = state
     await update.effective_message.reply_text("✍️ Creating a new quiz. Send the *Quiz Title*:")
 
+async def done_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles the /done command during quiz creation."""
+    if update.effective_chat.type != 'private':
+        return
+
+    uid = update.effective_user.id
+    key = (uid, "create")
+    
+    if key not in ongoing_sessions:
+        return
+
+    state = ongoing_sessions[key]
+
+    # Check if we are in the questions step
+    if state.get("step") == "questions":
+        if not state.get("questions"):
+            await update.effective_message.reply_text("❌ No questions found. Send at least one question in the required format or upload a .txt file.")
+            return
+        
+        state["step"] = "images"
+        await update.effective_message.reply_text(
+            "✅ Questions saved.\n\n"
+            "Do you want to add images to the questions?\n"
+            "If yes, send an image with the **question number** as the caption (e.g., caption `1` for the first question).\n\n"
+            "Send /no_images when you are finished adding images or to skip this step."
+        )
+
 async def create_flow_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != 'private':
         return
@@ -591,19 +618,8 @@ async def create_flow_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # State: Questions
     if state["step"] == "questions":
-        if text == "/done":
-            if not state.get("questions"):
-                await update.effective_message.reply_text("❌ No questions found. Send at least one question in the required format or upload a .txt file.")
-                return
-            state["step"] = "images"
-            await update.effective_message.reply_text(
-                "✅ Questions saved.\n\n"
-                "Do you want to add images to the questions?\n"
-                "If yes, send an image with the **question number** as the caption (e.g., caption `1` for the first question).\n\n"
-                "Send /no_images when you are finished adding images or to skip this step."
-            )
-            return
-
+        # The /done logic is now in its own handler.
+        # This part will now only process question text.
         parsed = parse_format2_enhanced(text)
         if not parsed:
             await update.effective_message.reply_text("❌ Could not parse the question. Make sure it exactly matches the required format (numbered, (a) options, and one ✅).")
@@ -1624,6 +1640,7 @@ def main():
     # Command Handlers
     app.add_handler(CommandHandler(["start", "help"], start_handler))
     app.add_handler(CommandHandler("create", create_command))
+    app.add_handler(CommandHandler("done", done_command_handler))
     app.add_handler(CommandHandler("myquizzes", myquizzes_handler))
     app.add_handler(CommandHandler("take", take_handler))
     app.add_handler(CommandHandler("post", post_command))
@@ -1634,7 +1651,7 @@ def main():
     
     # Message Handlers
     app.add_handler(MessageHandler(filters.Document.ALL, document_handler))
-    app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, photo_handler)) # For quiz images
+    app.add_handler(MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, photo_handler))
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE & ~filters.COMMAND, create_flow_handler))
     app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.GROUPS & ~filters.COMMAND, schedule_flow_handler))
 
