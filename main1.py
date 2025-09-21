@@ -1647,7 +1647,10 @@ async def load_schedules_on_startup(application: Application):
 
 # --- MAIN BOT SETUP ---
 def main():
-    app = Application.builder().token(BOT_TOKEN).build()
+    # Explicitly create a JobQueue
+    job_queue = JobQueue()
+    # Pass the JobQueue instance to the application builder
+    app = Application.builder().token(BOT_TOKEN).job_queue(job_queue).build()
     
     # Command Handlers
     app.add_handler(CommandHandler(["start", "help"], start_handler))
