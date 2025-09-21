@@ -532,7 +532,7 @@ async def create_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("✍️ Creating a new quiz. Send the *Quiz Title*:")
 
 async def done_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles the /done command during quiz creation."""
+    """Handles the /done command during the questions step of quiz creation."""
     if update.effective_chat.type != 'private':
         return
 
@@ -544,7 +544,6 @@ async def done_command_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     state = ongoing_sessions[key]
 
-    # Check if we are in the questions step
     if state.get("step") == "questions":
         if not state.get("questions"):
             await update.effective_message.reply_text("❌ No questions found. Send at least one question in the required format or upload a .txt file.")
@@ -557,6 +556,30 @@ async def done_command_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             "If yes, send an image with the **question number** as the caption (e.g., caption `1` for the first question).\n\n"
             "Send /no_images when you are finished adding images or to skip this step."
         )
+
+async def no_images_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles the /no_images command during the images step of quiz creation."""
+    if update.effective_chat.type != 'private':
+        return
+
+    uid = update.effective_user.id
+    key = (uid, "create")
+    
+    if key not in ongoing_sessions:
+        return
+
+    state = ongoing_sessions[key]
+
+    if state.get("step") == "images":
+        creator = get_or_create_creator_by_tg(update.effective_user)
+        quiz_id = generate_quiz_id()
+        db_execute("INSERT INTO quizzes (id, title, creator_id, total_time_min, time_per_question_sec, negative_mark, created_at) VALUES (?,?,?,?,?,?,?)",
+                         (quiz_id, state["title"], creator["id"], 0, state.get("time_per_question_sec", 30), state.get("negative", 0.0), datetime.utcnow().isoformat()))
+        for idx, q in enumerate(state["questions"]):
+            db_execute("INSERT INTO questions (quiz_id, idx, q_json) VALUES (?,?,?)", (quiz_id, idx, questions_to_json(q)))
+        
+        del ongoing_sessions[key]
+        await update.effective_message.reply_text(f"✅ Quiz created with id `{quiz_id}` (time per question: {state.get('time_per_question_sec')}s, negative: {state.get('negative')})", parse_mode=ParseMode.MARKDOWN)
 
 async def create_flow_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != 'private':
@@ -618,8 +641,6 @@ async def create_flow_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # State: Questions
     if state["step"] == "questions":
-        # The /done logic is now in its own handler.
-        # This part will now only process question text.
         parsed = parse_format2_enhanced(text)
         if not parsed:
             await update.effective_message.reply_text("❌ Could not parse the question. Make sure it exactly matches the required format (numbered, (a) options, and one ✅).")
@@ -630,17 +651,8 @@ async def create_flow_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # State: Images
     if state["step"] == "images":
-        if text == "/no_images":
-            creator = get_or_create_creator_by_tg(update.effective_user)
-            quiz_id = generate_quiz_id()
-            db_execute("INSERT INTO quizzes (id, title, creator_id, total_time_min, time_per_question_sec, negative_mark, created_at) VALUES (?,?,?,?,?,?,?)",
-                             (quiz_id, state["title"], creator["id"], 0, state.get("time_per_question_sec", 30), state.get("negative", 0.0), datetime.utcnow().isoformat()))
-            for idx, q in enumerate(state["questions"]):
-                db_execute("INSERT INTO questions (quiz_id, idx, q_json) VALUES (?,?,?)", (quiz_id, idx, questions_to_json(q)))
-            del ongoing_sessions[key]
-            await update.effective_message.reply_text(f"✅ Quiz created with id `{quiz_id}` (time per question: {state.get('time_per_question_sec')}s, negative: {state.get('negative')})", parse_mode=ParseMode.MARKDOWN)
-        else:
-            await update.effective_message.reply_text("Please send an image with a question number as the caption, or send /no_images to finish creating the quiz.")
+        # This part now only handles unexpected text. /no_images is a command.
+        await update.effective_message.reply_text("Please send an image with a question number as the caption, or send /no_images to finish creating the quiz.")
         return
 
 async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1641,6 +1653,7 @@ def main():
     app.add_handler(CommandHandler(["start", "help"], start_handler))
     app.add_handler(CommandHandler("create", create_command))
     app.add_handler(CommandHandler("done", done_command_handler))
+    app.add_handler(CommandHandler("no_images", no_images_command_handler))
     app.add_handler(CommandHandler("myquizzes", myquizzes_handler))
     app.add_handler(CommandHandler("take", take_handler))
     app.add_handler(CommandHandler("post", post_command))
