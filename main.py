@@ -1609,8 +1609,90 @@ async def tx_handler(client, message: Message):
     await message.reply_text("🎉 All quizzes sent!")
 
 
+# ── Poll Collector (/poll & /done) ──
+
+@app.on_message(filters.command("poll"))
+async def poll_command_handler(client, message: Message):
+    """Initiates a poll collection session for the user."""
+    uid = message.from_user.id
+    # Initialize the state for this user
+    user_state[uid] = {
+        "flow": "poll_collection", 
+        "polls": []
+    }
+    await message.reply_text(
+        "✅ OK! I'm ready to collect your quiz polls.\n\n"
+        "Please send me the polls one by one. When you're finished, send the /done command."
+    )
+
+@app.on_message(filters.command("done"))
+async def done_command_handler(client, message: Message):
+    """Finalizes the poll collection, formats, and sends the .txt file."""
+    uid = message.from_user.id
+
+    # Check if the user is in the correct flow
+    if user_state.get(uid, {}).get("flow") != "poll_collection":
+        # User might have typed /done by accident without starting /poll
+        return
+
+    collected_polls = user_state[uid].get("polls", [])
+
+    if not collected_polls:
+        await message.reply_text("You haven't sent any polls to collect. Use /poll to start.")
+        del user_state[uid] # Clean up state
+        return
+
+    await message.reply_text(f"👍 Got it! Formatting {len(collected_polls)} polls into a text file...")
+
+    # --- Format the collected polls into the specified text format ---
+    out_lines = []
+    for i, poll_data in enumerate(collected_polls, start=1):
+        # Add the question line
+        out_lines.append(f"{i}. {poll_data['question']}")
+        
+        # Add the option lines with (a), (b), etc.
+        for idx, opt_text in enumerate(poll_data['options']):
+            prefix = f"({chr(97 + idx)})" # chr(97) is 'a'
+            out_lines.append(f"{prefix} {opt_text}")
+        
+        # Add a blank line for spacing between questions
+        out_lines.append("") 
+
+    # --- Create and send the document ---
+    final_txt = "\n".join(out_lines).strip()
+    file_obj = io.BytesIO(final_txt.encode("utf-8"))
+    file_obj.name = f"collected_polls_from_{uid}.txt"
+
+    await message.reply_document(
+        file_obj,
+        caption=f"✅ Here are your {len(collected_polls)} collected polls."
+    )
+    
+    # --- Crucial: Clean up the user's state after finishing ---
+    del user_state[uid]
+
+# This handler specifically listens for incoming polls
+@app.on_message(filters.poll, group=2) # Using a group to ensure it's checked
+async def poll_message_handler(client, message: Message):
+    """Catches polls sent by a user who is in a poll_collection session."""
+    uid = message.from_user.id
+    
+    # Only process this poll if the user has started the /poll flow
+    if user_state.get(uid, {}).get("flow") == "poll_collection":
+        poll = message.poll
+        
+        # Store the necessary information
+        user_state[uid]["polls"].append({
+            "question": poll.question,
+            "options": [opt.text for opt in poll.options]
+        })
+        
+        count = len(user_state[uid]["polls"])
+        await message.reply_text(f"👍 Parsed poll #{count}. Send more or use /done to finish.")
+
+
 @app.on_message(filters.text & ~filters.command([
-    "start", "help", "create", "ping", "tx", "txqz", "htmk", "poll2txt", "shufftxt", "split", 
+    "start", "help", "create", "ping", "poll", "done", "tx", "txqz", "htmk", "poll2txt", "shufftxt", "split", 
     "ph", "ai", "ocr", "arrange"
 ]))
 
