@@ -1417,6 +1417,7 @@ async def backup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 os.remove(zip_path)
 
 async def restore_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global db
     if update.effective_user.id != OWNER_ID:
         return
     msg = update.effective_message
@@ -1453,7 +1454,6 @@ async def restore_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             shutil.move(restored_db_path, DB_PATH)
             
             # Re-initialize global DB connection
-            global db
             db = init_db()
 
             await status_msg.edit_text("Database restored. Now re-uploading images...")
