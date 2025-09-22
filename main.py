@@ -1839,7 +1839,7 @@ async def run_scraping_process(client, user_id):
         )
         await update_status(client, user_id, progress_msg)
         
-        scraped_quizzes = await scrape_quizzes_batch(quiz_ids, user_id)
+        scraped_quizzes = await scrape_quizzes_batch(client, quiz_ids, user_id)
         
         if state.get("cancelled"):
             elapsed = time.time() - start_time
@@ -1955,7 +1955,7 @@ async def scrape_single_page(session, url):
         print(f"Error scraping {url}: {e}")
         return []
 
-async def scrape_quizzes_batch(quiz_ids, user_id):
+async def scrape_quizzes_batch(client, quiz_ids, user_id):
     """Scrapes quizzes in batches with parallel question processing."""
     if user_id not in user_state:
         return []
