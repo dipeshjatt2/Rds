@@ -1,5 +1,7 @@
 # Add these with your other imports at the top of the file
 import zipfile
+import shutil
+from pathlib import Path
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, urljoin
 from datetime import datetime 
@@ -1697,190 +1699,392 @@ async def poll_message_handler(client, message: Message):
 
 # ── [NEW] TestNook Scraper (/scr) ──  
 # ── /scr HANDLER ──
-# ── 8. [NEW] TestNook Scraper (/scr) ──
-
-# --- Helper Functions for Scraper ---
-
-async def fetch(session, url):
-    """Performs an asynchronous GET request."""
+# ── /scr Command Handler ──
+@app.on_message(filters.command("scr"))
+async def scr_command_handler(client, message: Message):
+    """
+    Scrapes quiz IDs and quizzes from TestNook, then sends a zip file.
+    Usage: /scr [creator_id] [page_num] [workers (optional)]
+    Example: /scr 12345 3
+    Example: /scr 12345 3 10
+    """
+    # Parse command arguments
     try:
-        async with session.get(url, timeout=20) as response:
-            if response.status == 200:
-                return await response.text()
-    except Exception as e:
-        print(f"Error fetching {url}: {e}")
-    return None
+        args = message.text.split()
+        if len(args) < 3:
+            await message.reply_text(
+                "❌ **Usage:** `/scr [creator_id] [page_num] [workers (optional)]`\n\n"
+                "**Example:** `/scr 12345 3`\n"
+                "**Example:** `/scr 12345 3 10`"
+            )
+            return
+        
+        creator_id = args[1]
+        page_num = int(args[2])
+        workers = int(args[3]) if len(args) > 3 else 5
+        
+        if not creator_id.isdigit():
+            await message.reply_text("❌ Creator ID must be a number.")
+            return
+        
+        if page_num < 1:
+            await message.reply_text("❌ Page number must be at least 1.")
+            return
+        
+        if workers < 1 or workers > 20:
+            await message.reply_text("❌ Workers must be between 1 and 20.")
+            return
+            
+    except ValueError:
+        await message.reply_text("❌ Invalid arguments. Please check your input.")
+        return
+    
+    # Store scraping state
+    user_id = message.from_user.id
+    user_state[user_id] = {
+        "flow": "scraping",
+        "creator_id": creator_id,
+        "page_num": page_num,
+        "workers": workers,
+        "cancelled": False,
+        "status_message": None,
+        "quiz_ids": [],
+        "scraped_quizzes": []
+    }
+    
+    # Send initial status message
+    status_msg = await message.reply_text(
+        f"🚀 **Starting Scraping Process**\n\n"
+        f"• Creator ID: `{creator_id}`\n"
+        f"• Pages: `{page_num}`\n"
+        f"• Workers: `{workers}`\n\n"
+        f"⏳ Step 1/3: Scraping quiz IDs..."
+    )
+    
+    user_state[user_id]["status_message"] = status_msg
+    
+    # Start the scraping process
+    asyncio.create_task(run_scraping_process(client, user_id))
 
-async def get_correct_answer(session, base_url, quiz_id, q_num):
-    """Sends a POST request to find the correct option index."""
-    answer_url = f"{base_url}/quiz/{quiz_id}/answer"
-    referer_url = f"{base_url}/quiz/{quiz_id}/question/{q_num}"
-    payload = {"question_num": q_num, "selected_option": 0} # We can send any option
-    headers = {
+async def run_scraping_process(client, user_id):
+    """Runs the complete scraping process for a user."""
+    if user_id not in user_state or user_state[user_id].get("flow") != "scraping":
+        return
+    
+    state = user_state[user_id]
+    creator_id = state["creator_id"]
+    page_num = state["page_num"]
+    workers = state["workers"]
+    
+    try:
+        # Step 1: Scrape quiz IDs
+        await update_status(client, user_id, "⏳ Step 1/3: Scraping quiz IDs...")
+        quiz_ids = await scrape_quiz_ids(creator_id, page_num, workers)
+        
+        if state.get("cancelled"):
+            await finalize_scraping(client, user_id, "❌ Process cancelled by user.")
+            return
+            
+        if not quiz_ids:
+            await finalize_scraping(client, user_id, "❌ No quiz IDs found. Process stopped.")
+            return
+            
+        state["quiz_ids"] = quiz_ids
+        
+        # Send quiz IDs file to user
+        quiz_ids_file = f"creator_{creator_id}_quiz_ids.txt"
+        with open(quiz_ids_file, "w", encoding="utf-8") as f:
+            for quiz in quiz_ids:
+                f.write(f"{quiz['quiz_name']} : {quiz['quiz_id']}\n")
+        
+        await client.send_document(
+            user_id,
+            document=quiz_ids_file,
+            caption=f"✅ Found {len(quiz_ids)} quiz IDs for creator {creator_id}"
+        )
+        
+        # Step 2: Scrape quizzes
+        await update_status(client, user_id, f"⏳ Step 2/3: Scraping {len(quiz_ids)} quizzes...")
+        scraped_quizzes = await scrape_quizzes(quiz_ids, workers, user_id)
+        
+        if state.get("cancelled"):
+            await finalize_scraping(client, user_id, "❌ Process cancelled by user.")
+            return
+            
+        state["scraped_quizzes"] = scraped_quizzes
+        
+        # Step 3: Create zip file
+        await update_status(client, user_id, "⏳ Step 3/3: Creating zip file...")
+        zip_filename = await create_zip_file(creator_id, scraped_quizzes)
+        
+        # Send zip file
+        await client.send_document(
+            user_id,
+            document=zip_filename,
+            caption=f"✅ Scraping complete! {len(scraped_quizzes)} quizzes scraped for creator {creator_id}"
+        )
+        
+        await finalize_scraping(client, user_id, "✅ Scraping process completed successfully!")
+        
+    except Exception as e:
+        await finalize_scraping(client, user_id, f"❌ An error occurred: {str(e)}")
+
+async def scrape_quiz_ids(creator_id, page_num, workers):
+    """Scrapes quiz IDs using logic from scrapequizid.py."""
+    quiz_ids = []
+    BASE_URL = "https://testnookapp-f602da876a9b.herokuapp.com"
+    
+    HEADERS = {
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'Accept-Language': 'en-GB',
+        'Connection': 'keep-alive',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'same-origin',
+        'Sec-Fetch-User': '?1',
+        'Upgrade-Insecure-Requests': '1',
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36',
+        'sec-ch-ua': '"Chromium";v="127", "Not)A;Brand";v="99", "Microsoft Edge Simulate";v="127", "Lemur";v="127"',
+        'sec-ch-ua-mobile': '?1',
+        'sec-ch-ua-platform': '"Android"',
+    }
+    
+    urls = []
+    for page in range(1, page_num + 1):
+        if page == 1:
+            urls.append(f"{BASE_URL}/creator/{creator_id}")
+        else:
+            urls.append(f"{BASE_URL}/creator/{creator_id}?page={page}")
+    
+    async with aiohttp.ClientSession(headers=HEADERS) as session:
+        tasks = []
+        for url in urls:
+            task = asyncio.create_task(scrape_single_page(session, url))
+            tasks.append(task)
+        
+        results = await asyncio.gather(*tasks)
+        
+        for result in results:
+            if isinstance(result, list):
+                quiz_ids.extend(result)
+    
+    return quiz_ids
+
+async def scrape_single_page(session, url):
+    """Scrapes a single page for quiz data."""
+    try:
+        async with session.get(url, timeout=200) as response:
+            response.raise_for_status()
+            html = await response.text()
+        
+        soup = BeautifulSoup(html, 'html.parser')
+        quiz_cards = soup.find_all('div', class_='quiz-card')
+        
+        if not quiz_cards:
+            return []
+        
+        quizzes = []
+        for card in quiz_cards:
+            name_tag = card.find('h3')
+            quiz_name = name_tag.get_text(strip=True) if name_tag else "Unknown Quiz Name"
+
+            onclick_attr = card.get('onclick', '')
+            match = re.search(r"/quiz/([a-zA-Z0-9]+)", onclick_attr)
+            quiz_id = match.group(1) if match else None
+
+            if quiz_id:
+                quizzes.append({
+                    'quiz_name': quiz_name,
+                    'quiz_id': quiz_id
+                })
+        
+        return quizzes
+        
+    except Exception as e:
+        print(f"Error scraping {url}: {e}")
+        return []
+
+async def scrape_quizzes(quiz_ids, workers, user_id):
+    """Scrapes quizzes using logic from scrapequiz.py."""
+    scraped_quizzes = []
+    BASE_URL = "https://testnookapp-f602da876a9b.herokuapp.com"
+    
+    HEADERS = {
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'Accept-Language': 'en-GB',
+        'Connection': 'keep-alive',
+        'Cookie': 'session=.eJxNjkEKwjAQRe8y61biTBJjztF9iGYKAU0xmSJYeneDiLh9vP_4G1zXWrlIeKzcJC8FvBr-YH6FnMCDdZpnp8jGlIye-aISsYkWBvhIsbQn1wZ-27-kSawSJN-5z1GhGdV5RJwUeSRPdEB31CfqAVkk3n4HesPR_gaS-jGq.aNDBNQ.oB9tZ3n0UXy8dBQcbr38SWYEEtk',
+        'Referer': f'{BASE_URL}/',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'same-origin',
+        'Sec-Fetch-User': '?1',
+        'Upgrade-Insecure-Requests': '1',
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Mobile Safari/537.36',
+        'sec-ch-ua': '"Chromium";v="127", "Not)A;Brand";v="99", "Microsoft Edge Simulate";v="127", "Lemur";v="127"',
+        'sec-ch-ua-mobile': '?1',
+        'sec-ch-ua-platform': '"Android"',
+    }
+    
+    POST_HEADERS = {
+        **HEADERS,
         'Accept': '*/*',
         'Content-Type': 'application/json',
-        'Origin': base_url,
-        'Referer': referer_url,
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
+        'Origin': BASE_URL,
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
     }
-    try:
-        async with session.post(answer_url, json=payload, headers=headers, timeout=20) as response:
-            if response.status == 200:
-                data = await response.json()
-                if data.get("success"):
-                    return data.get("correct_option")
-    except Exception as e:
-        print(f"Error getting answer for Q{q_num} of {quiz_id}: {e}")
-    return None
+    
+    # Create a semaphore to limit concurrent requests
+    semaphore = asyncio.Semaphore(workers)
+    
+    async def scrape_single_quiz(quiz_info):
+        """Scrapes a single quiz."""
+        async with semaphore:
+            if user_id in user_state and user_state[user_id].get("cancelled"):
+                return None
+                
+            quiz_name = quiz_info['quiz_name']
+            quiz_id = quiz_info['quiz_id']
+            output_filename = sanitize_filename(quiz_name) + ".txt"
+            
+            try:
+                async with aiohttp.ClientSession(headers=HEADERS) as session:
+                    q_num = 0
+                    quiz_content = []
+                    
+                    while True:
+                        # Fetch the question page
+                        q_url = f"{BASE_URL}/quiz/{quiz_id}/question/{q_num}"
+                        async with session.get(q_url, timeout=200) as response:
+                            response.raise_for_status()
+                            html = await response.text()
+                        
+                        if "Quiz Complete" in html:
+                            break
+                        
+                        soup = BeautifulSoup(html, 'html.parser')
+                        
+                        # Parse question and options
+                        question_text = soup.find('div', class_='question-text')
+                        if question_text:
+                            question_text = question_text.get_text(strip=True)
+                        else:
+                            question_text = "Unknown Question"
+                        
+                        options = []
+                        option_elements = soup.find_all('div', class_='option')
+                        for opt in option_elements:
+                            options.append(opt.get_text(strip=True))
+                        
+                        # Submit a temporary answer to find the correct one
+                        answer_url = f"{BASE_URL}/quiz/{quiz_id}/answer"
+                        post_headers = {**POST_HEADERS, 'Referer': q_url}
+                        payload = {"question_num": q_num, "selected_option": 0}
+                        
+                        async with session.post(answer_url, headers=post_headers, json=payload, timeout=20) as resp:
+                            answer_data = await resp.json()
+                        
+                        if not answer_data.get('success'):
+                            raise Exception(f"Failed to get answer for Q{q_num}")
+                        
+                        correct_option_index = answer_data['correct_option']
+                        
+                        # Format the question and answers
+                        quiz_content.append(f"{q_num + 1}. {question_text}")
+                        for i, option_text in enumerate(options):
+                            cleaned_option = re.sub(r'^[A-Z]\s*', '', option_text)
+                            marker = "✅" if i == correct_option_index else ""
+                            quiz_content.append(f"({chr(97 + i)}) {cleaned_option} {marker}")
+                        quiz_content.append("")  # Add a blank line
+                        
+                        q_num += 1
+                        await asyncio.sleep(0.2)  # Be polite to the server
+                    
+                    # Save the quiz content to a file
+                    with open(output_filename, 'w', encoding='utf-8') as f:
+                        f.write("\n".join(quiz_content))
+                    
+                    return output_filename
+                    
+            except Exception as e:
+                print(f"Error scraping quiz {quiz_id}: {e}")
+                # Write error to a log file
+                with open("error_log.txt", "a", encoding="utf-8") as log_file:
+                    log_file.write(f"Error processing '{quiz_name}' (ID: {quiz_id}): {e}\n")
+                return None
+    
+    # Scrape all quizzes concurrently
+    tasks = []
+    for quiz in quiz_ids:
+        tasks.append(asyncio.create_task(scrape_single_quiz(quiz)))
+    
+    results = await asyncio.gather(*tasks)
+    
+    # Filter out None results (failed scrapes)
+    return [result for result in results if result is not None]
 
-last_update_time = {}
-async def edit_status(message, text, user_id):
-    """Helper to edit status message, respecting FloodWait by only updating every 10s."""
-    global last_update_time
-    current_time = time.time()
-    if user_id not in last_update_time or (current_time - last_update_time.get(user_id, 0)) > 10:
+async def create_zip_file(creator_id, scraped_files):
+    """Creates a zip file with all scraped quizzes."""
+    zip_filename = f"{creator_id}by@andr0idpie9.zip"
+    
+    with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for file in scraped_files:
+            zipf.write(file, os.path.basename(file))
+    
+    # Clean up individual files
+    for file in scraped_files:
         try:
-            await message.edit_text(text, parse_mode=ParseMode.HTML)
-            last_update_time[user_id] = current_time
-            await asyncio.sleep(0.1) # Small delay to allow update to process
-        except Exception:
-            pass # Ignore if message can't be edited (e.g., deleted)
-
-
-# --- Main Command Handler ---
-
-@app.on_message(filters.command("scr"))
-async def scr_handler(client, message: Message):
-    """
-    Scrapes all quizzes from a TestNook creator's page.
-    Usage: /scr [creator_page_url]
-    """
-    args = message.text.split(None, 1)
-    if len(args) < 2 or not args[1].startswith("http"):
-        await message.reply_text("<b>Usage:</b> <code>/scr [URL]</code>\n\nPlease provide a valid creator page URL.", parse_mode=ParseMode.HTML)
-        return
-
-    creator_url = args[1].strip()
-    try:
-        # Extract base URL and creator ID for cleaner operations
-        base_url_match = re.match(r'(https?://[^/]+)', creator_url)
-        creator_id_match = re.search(r'/creator/(\d+)', creator_url)
-        if not base_url_match or not creator_id_match:
-            await message.reply_text("❌ Invalid URL format. Please provide a full creator URL.")
-            return
-        base_url = base_url_match.group(1)
-        creator_id = creator_id_match.group(1)
-    except Exception:
-        await message.reply_text("❌ Could not parse the provided URL.")
-        return
-
-    status_msg = await message.reply_text("🚀 Initializing scraper...")
-    user_id = message.from_user.id
-    all_quiz_info = []
-    
-    # --- 1. Scrape Creator Pages to Find All Quizzes ---
-    async with aiohttp.ClientSession() as session:
-        page_num = 1
-        await edit_status(status_msg, "🔍 Searching for quizzes on creator pages...", user_id)
-        while True:
-            paginated_url = f"{base_url}/creator/{creator_id}?page={page_num}"
-            html = await fetch(session, paginated_url)
-            if not html or "No Quizzes Available" in html:
-                break # Stop if page is empty or has the "no quizzes" message
-
-            soup = BeautifulSoup(html, 'html.parser')
-            quiz_cards = soup.find_all('a', class_='quiz-card')
-            if not quiz_cards:
-                break # No more quizzes found on this page
-                
-            for card in quiz_cards:
-                quiz_id = card['href'].split('/')[-1]
-                title_element = card.find('h3', class_='quiz-title')
-                quiz_title = title_element.get_text(strip=True) if title_element else f"quiz_{quiz_id}"
-                # Sanitize filename
-                quiz_title = re.sub(r'[\\/*?:"<>|]', "", quiz_title)
-                all_quiz_info.append({"id": quiz_id, "name": quiz_title})
-            
-            page_num += 1
-            await asyncio.sleep(1) # Be respectful to the server
-
-        if not all_quiz_info:
-            await edit_status(status_msg, "🤷‍♂️ No quizzes found for this creator.", user_id)
-            return
-            
-        await edit_status(status_msg, f"✅ Found {len(all_quiz_info)} quizzes. Starting download...", user_id)
-        
-        # --- 2. Scrape Each Quiz and Create TXT Files ---
-        txt_files = []
-        total_quizzes = len(all_quiz_info)
-        
-        for i, quiz in enumerate(all_quiz_info):
-            quiz_id = quiz['id']
-            quiz_name = quiz['name']
-            
-            await edit_status(status_msg, f"⚙️ Processing Quiz {i+1}/{total_quizzes}:\n<b>{quiz_name}</b>", user_id)
-
-            quiz_content = []
-            q_num = 0
-            while True:
-                q_url = f"{base_url}/quiz/{quiz_id}/question/{q_num}"
-                q_html = await fetch(session, q_url)
-
-                if not q_html or "Quiz Complete" in q_html:
-                    break
-
-                q_soup = BeautifulSoup(q_html, 'html.parser')
-                
-                question_text_elem = q_soup.find('div', class_='question-text')
-                if not question_text_elem:
-                    break # Couldn't parse question, might be end of quiz
-                
-                question_text = question_text_elem.get_text(strip=True)
-                options = [opt.get_text(strip=True) for opt in q_soup.find_all('div', class_='option')]
-                
-                correct_option_index = await get_correct_answer(session, base_url, quiz_id, q_num)
-                
-                # Format the question and options
-                formatted_question = f"{q_num + 1}. {question_text}\n"
-                for idx, option in enumerate(options):
-                    option_prefix = f"({chr(97 + idx)})" # a), b), c)...
-                    is_correct = " ✅" if idx == correct_option_index else ""
-                    formatted_question += f"{option_prefix} {option}{is_correct}\n"
-                
-                quiz_content.append(formatted_question)
-                q_num += 1
-                await asyncio.sleep(0.5) # Be respectful
-
-            if quiz_content:
-                filename = f"{quiz_name}.txt"
-                txt_files.append(filename)
-                with open(filename, 'w', encoding='utf-8-sig') as f:
-                    f.write("\n\n".join(quiz_content))
-
-    # --- 3. Compress Files into a ZIP and Send ---
-    if not txt_files:
-        await edit_status(status_msg, "⚠️ Could not download any quiz content.", user_id)
-        return
-        
-    zip_filename = f"{creator_id}.zip"
-    await edit_status(status_msg, f"📦 Compressing {len(txt_files)} files into <b>{zip_filename}</b>...", user_id)
-
-    with zipfile.ZipFile(zip_filename, 'w') as zipf:
-        for file in txt_files:
-            zipf.write(file)
-            
-    await edit_status(status_msg, f"📤 Uploading...", user_id)
-    await client.send_document(message.chat.id, document=zip_filename, caption=f"All quizzes from creator `{creator_id}`")
-    
-    # --- 4. Cleanup ---
-    await status_msg.delete()
-    try:
-        os.remove(zip_filename)
-        for file in txt_files:
             os.remove(file)
-    except Exception as e:
-        print(f"Cleanup error: {e}")
+        except:
+            pass
+    
+    return zip_filename
 
+async def update_status(client, user_id, message):
+    """Updates the status message for the user."""
+    if user_id in user_state and user_state[user_id].get("status_message"):
+        try:
+            await user_state[user_id]["status_message"].edit_text(message)
+        except:
+            pass  # Ignore errors if message can't be edited
+
+async def finalize_scraping(client, user_id, message):
+    """Finalizes the scraping process and cleans up."""
+    if user_id in user_state and user_state[user_id].get("status_message"):
+        try:
+            await user_state[user_id]["status_message"].edit_text(message)
+        except:
+            pass
+    
+    # Clean up state
+    if user_id in user_state:
+        del user_state[user_id]
+
+# Add the /cancel command handler
+@app.on_message(filters.command("cancel"))
+async def cancel_command_handler(client, message: Message):
+    """Cancels any ongoing scraping process for the user."""
+    user_id = message.from_user.id
+    
+    if user_id in user_state and user_state[user_id].get("flow") == "scraping":
+        user_state[user_id]["cancelled"] = True
+        await message.reply_text("⏹️ Cancellation requested. Finishing current operations...")
+        
+        # If we have some data, create and send a zip file
+        if user_state[user_id].get("scraped_quizzes"):
+            creator_id = user_state[user_id]["creator_id"]
+            scraped_quizzes = user_state[user_id]["scraped_quizzes"]
+            
+            zip_filename = await create_zip_file(creator_id, scraped_quizzes)
+            
+            await client.send_document(
+                user_id,
+                document=zip_filename,
+                caption=f"✅ Partial results: {len(scraped_quizzes)} quizzes scraped before cancellation"
+            )
+    else:
+        await message.reply_text("❌ No active scraping process to cancel.")
 
 @app.on_message(filters.text & ~filters.command([
     "start", "help", "create", "ping", "poll", "done", "scr", "tx", "txqz", "htmk", "poll2txt", "shufftxt", "split", 
