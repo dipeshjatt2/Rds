@@ -1697,8 +1697,26 @@ async def poll_message_handler(client, message: Message):
         await message.reply_text(f"👍 Parsed poll #{count}. Send more or use /done to finish.")
 # ... (all your existing bot code above) ...
 
-# ── [NEW] TestNook Scraper (/scr) ──  
-# ── /scr HANDLER ──
+def sanitize_filename(filename):
+    """
+    Sanitize a string to be safe for use as a filename.
+    Removes or replaces characters that are not allowed in filenames.
+    """
+    # Remove invalid characters
+    invalid_chars = '<>:"/\\|?*'
+    for char in invalid_chars:
+        filename = filename.replace(char, '')
+    
+    # Replace spaces with underscores (optional)
+    filename = filename.replace(' ', '_')
+    
+    # Limit length to avoid issues with long filenames
+    if len(filename) > 100:
+        filename = filename[:100]
+    
+    return filename
+
+
 # ── /scr Command Handler ──
 @app.on_message(filters.command("scr"))
 async def scr_command_handler(client, message: Message):
