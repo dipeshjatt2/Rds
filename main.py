@@ -1700,7 +1700,7 @@ async def poll_message_handler(client, message: Message):
 # ... (all your existing bot code above) ...
 
 API_SERVERS = [
-    ""site-peda.onrender.com",
+    "https://site-peda.onrender.com",
     ]
 
 # Add this function to manage API servers
