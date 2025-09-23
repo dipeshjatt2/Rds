@@ -1700,6 +1700,7 @@ async def poll_message_handler(client, message: Message):
 # ... (all your existing bot code above) ...
 
 # Add this function with other helper functions
+# Add this function with other helper functions
 def sanitize_filename(name):
     """Removes invalid characters from a string to make it a valid filename."""
     return re.sub(r'[\\/*?:"<>|]', "", name)
@@ -1812,21 +1813,20 @@ async def run_scraping_process(client, user_id):
         state["total_quizzes"] = len(quiz_ids)
         state["total_batches"] = (len(quiz_ids) + BATCH_SIZE - 1) // BATCH_SIZE
         
-        # Send quiz IDs file to user
-        quiz_ids_file = f"creator_{creator_id}_quiz_ids.txt"
-        with open(quiz_ids_file, "w", encoding="utf-8") as f:
-            for quiz in quiz_ids:
-                f.write(f"{quiz['quiz_name']} : {quiz['quiz_id']}\n")
+        # Send quiz IDs as JSON file to user
+        quiz_ids_json = f"creator_{creator_id}_quiz_ids.json"
+        with open(quiz_ids_json, "w", encoding="utf-8") as f:
+            json.dump(quiz_ids, f, ensure_ascii=False, indent=2)
         
         await client.send_document(
             user_id,
-            document=quiz_ids_file,
+            document=quiz_ids_json,
             caption=f"✅ Found {len(quiz_ids)} quiz IDs for creator {creator_id}"
         )
         
-        # Clean up the quiz IDs file
+        # Clean up the quiz IDs JSON file
         try:
-            os.remove(quiz_ids_file)
+            os.remove(quiz_ids_json)
         except:
             pass
         
@@ -1841,7 +1841,7 @@ async def run_scraping_process(client, user_id):
         )
         await update_status(client, user_id, progress_msg)
         
-        scraped_quizzes = await scrape_quizzes_batch(client, quiz_ids, user_id)
+        scraped_quizzes = await scrape_quizzes_batch(quiz_ids, user_id)
         
         if state.get("cancelled"):
             elapsed = time.time() - start_time
@@ -1957,7 +1957,7 @@ async def scrape_single_page(session, url):
         print(f"Error scraping {url}: {e}")
         return []
 
-async def scrape_quizzes_batch(client, quiz_ids, user_id):
+async def scrape_quizzes_batch(quiz_ids, user_id):
     """Scrapes quizzes in batches with parallel question processing."""
     if user_id not in user_state:
         return []
@@ -2026,15 +2026,30 @@ async def scrape_quizzes_batch(client, quiz_ids, user_id):
         )
         await update_status(client, user_id, progress_msg)
         
-        # Process current batch
-        batch_results = await asyncio.gather(*[
-            scrape_single_quiz(quiz_info, HEADERS, POST_HEADERS, BASE_URL) 
-            for quiz_info in current_batch
-        ])
+        # Process current batch with error handling
+        batch_tasks = []
+        for quiz_info in current_batch:
+            task = asyncio.create_task(
+                scrape_single_quiz(quiz_info, HEADERS, POST_HEADERS, BASE_URL)
+            )
+            batch_tasks.append(task)
         
-        # Add successful scrapes to results
-        for result in batch_results:
-            if result:
+        batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+        
+        # Process results
+        for i, result in enumerate(batch_results):
+            if isinstance(result, Exception):
+                print(f"Error processing quiz {current_batch[i]['quiz_id']}: {result}")
+                # Create error file for failed quizzes
+                quiz_info = current_batch[i]
+                error_filename = f"error_{quiz_info['quiz_id']}.txt"
+                with open(error_filename, 'w', encoding='utf-8-sig') as f:
+                    f.write(f"Failed to scrape quiz: {quiz_info['quiz_name']}\n")
+                    f.write(f"Quiz ID: {quiz_info['quiz_id']}\n")
+                    f.write(f"Error: {str(result)}")
+                scraped_quizzes.append(error_filename)
+                state["processed_quizzes"] += 1
+            elif result:  # Successful result
                 scraped_quizzes.append(result)
                 state["processed_quizzes"] += 1
     
@@ -2044,7 +2059,9 @@ async def scrape_single_quiz(quiz_info, headers, post_headers, base_url):
     """Scrapes a single quiz with parallel question processing."""
     quiz_name = quiz_info['quiz_name']
     quiz_id = quiz_info['quiz_id']
-    output_filename = sanitize_filename(quiz_name) + ".txt"
+    
+    # Use quiz ID as filename to avoid issues with special characters
+    output_filename = f"{quiz_id}.txt"
     
     try:
         async with aiohttp.ClientSession(headers=headers) as session:
@@ -2055,8 +2072,10 @@ async def scrape_single_quiz(quiz_info, headers, post_headers, base_url):
                 
                 if "Quiz Complete" in response_text:
                     # Quiz is empty or already complete
-                    with open(output_filename, 'w', encoding='utf-8') as f:
-                        f.write("Quiz is empty or already complete.")
+                    with open(output_filename, 'w', encoding='utf-8-sig') as f:
+                        f.write(f"Quiz: {quiz_name}\n")
+                        f.write(f"Quiz ID: {quiz_id}\n")
+                        f.write("Status: Quiz is empty or already complete.\n")
                     return output_filename
                 
                 # Get total questions
@@ -2074,10 +2093,16 @@ async def scrape_single_quiz(quiz_info, headers, post_headers, base_url):
             
             question_results = await asyncio.gather(*question_tasks)
             
-            # Sort results by question number and write to file
+            # Sort results by question number and write to file with UTF-8-SIG encoding
             sorted_results = sorted([r for r in question_results if r], key=lambda x: x['q_num'])
             
-            with open(output_filename, 'w', encoding='utf-8') as f:
+            with open(output_filename, 'w', encoding='utf-8-sig') as f:
+                # Write quiz header with original name
+                f.write(f"Quiz: {quiz_name}\n")
+                f.write(f"Quiz ID: {quiz_id}\n")
+                f.write(f"Total Questions: {total_questions}\n")
+                f.write("=" * 50 + "\n\n")
+                
                 for result in sorted_results:
                     if "error" in result:
                         f.write(f"{result['q_num'] + 1}. FAILED TO FETCH QUESTION: {result['error']}\n\n")
@@ -2094,10 +2119,13 @@ async def scrape_single_quiz(quiz_info, headers, post_headers, base_url):
             
     except Exception as e:
         print(f"Error scraping quiz {quiz_id}: {e}")
-        # Write error to a log file
-        with open("error_log.txt", "a", encoding="utf-8") as log_file:
-            log_file.write(f"Critical error in '{quiz_name}' (ID: {quiz_id}): {e}\n")
-        return None
+        # Create error file
+        error_filename = f"error_{quiz_id}.txt"
+        with open(error_filename, 'w', encoding='utf-8-sig') as f:
+            f.write(f"Quiz: {quiz_name}\n")
+            f.write(f"Quiz ID: {quiz_id}\n")
+            f.write(f"Error: {str(e)}\n")
+        return error_filename
 
 async def fetch_and_solve_question(session, quiz_id, q_num, base_url, post_headers):
     """Fetches and processes a single question."""
@@ -2206,8 +2234,8 @@ async def cancel_command_handler(client, message: Message):
             )
     else:
         await message.reply_text("❌ No active scraping process to cancel.")
-
-
+    
+        
 @app.on_message(filters.text & ~filters.command([
     "start", "help", "create", "ping", "poll", "cancel", "done", "scr", "tx", "txqz", "htmk", "poll2txt", "shufftxt", "split", 
     "ph", "ai", "ocr", "arrange"
