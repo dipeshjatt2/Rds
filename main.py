@@ -1703,9 +1703,11 @@ async def poll_message_handler(client, message: Message):
 # Add this function with other helper functions
 # Add these imports at the top
 # Add this configuration
+# Add these imports at the top
+# Add this configuration - UPDATE WITH YOUR ACTUAL API SERVERS
 API_SERVERS = [
     "https://site-peda.onrender.com",
- ]
+]
 
 # Add this function to manage API servers
 def get_api_server():
@@ -1717,37 +1719,32 @@ def get_api_server():
     get_api_server.counter += 1
     return server
 
-# Replace the /scr command handler with this distributed version
+# Replace the /scr command handler with this corrected version
 @app.on_message(filters.command("scr"))
 async def scr_command_handler(client, message: Message):
     """
     Scrapes quiz IDs and quizzes using distributed API servers.
-    Usage: /scr [creator_id] [page_num] [workers (optional)]
+    Usage: /scr [creator_id] [page_num]
     """
     try:
         args = message.text.split()
         if len(args) < 3:
             await message.reply_text(
-                "❌ **Usage:** `/scr [creator_id] [page_num] [workers (optional)]`\n\n"
+                "❌ **Usage:** `/scr [creator_id] [page_num]`\n\n"
                 "**Example:** `/scr 12345 3`\n"
-                "**Example:** `/scr 12345 3 10`"
+                "**Note:** Workers parameter removed in new API version"
             )
             return
         
         creator_id = args[1]
         page_num = int(args[2])
-        workers = int(args[3]) if len(args) > 3 else 5
         
         if not creator_id.isdigit():
             await message.reply_text("❌ Creator ID must be a number.")
             return
         
-        if page_num < 1:
-            await message.reply_text("❌ Page number must be at least 1.")
-            return
-        
-        if workers < 1 or workers > 20:
-            await message.reply_text("❌ Workers must be between 1 and 20.")
+        if page_num < 1 or page_num > 1000:
+            await message.reply_text("❌ Page number must be between 1 and 1000.")
             return
             
     except ValueError:
@@ -1757,95 +1754,93 @@ async def scr_command_handler(client, message: Message):
     # Start the scraping process via API
     status_msg = await message.reply_text("🚀 Starting distributed scraping process...")
     
-    asyncio.create_task(distributed_scraping_process(client, message.from_user.id, creator_id, page_num, workers, status_msg))
+    asyncio.create_task(distributed_scraping_process(client, message.from_user.id, creator_id, page_num, status_msg))
 
-async def distributed_scraping_process(client, user_id, creator_id, page_num, workers, status_msg):
+async def distributed_scraping_process(client, user_id, creator_id, page_num, status_msg):
     """Handle scraping using distributed API servers."""
     api_server = get_api_server()
     
     try:
-        # Start scraping task
+        # Start scraping task - NOTE: workers parameter removed in new API
         start_response = requests.post(
             f"{api_server}/api/scrape/start",
             json={
                 "creator_id": creator_id,
-                "page_num": page_num,
-                "workers": workers
+                "page_num": page_num
+                # workers parameter removed in new API version
             },
             timeout=10
         )
         
         if start_response.status_code != 200:
-            await status_msg.edit_text("❌ Failed to start scraping task on API server.")
+            error_msg = start_response.json().get('error', 'Unknown error')
+            await status_msg.edit_text(f"❌ Failed to start scraping: {error_msg}")
             return
         
         task_data = start_response.json()
         task_id = task_data["task_id"]
         
+        await status_msg.edit_text(
+            f"🚀 **Task Started Successfully**\n\n"
+            f"• Creator ID: `{creator_id}`\n"
+            f"• Pages: `{page_num}`\n"
+            f"• Task ID: `{task_id}`\n"
+            f"• API Server: `{api_server}`\n\n"
+            f"⏳ Monitoring progress..."
+        )
+        
         # Monitor progress
         last_progress = 0
         start_time = time.time()
+        quiz_ids_json_sent = False
         
         while True:
             # Check task status
-            status_response = requests.get(f"{api_server}/api/scrape/status/{task_id}")
-            
-            if status_response.status_code != 200:
-                await status_msg.edit_text("❌ Failed to get task status from API server.")
-                return
-            
-            status_data = status_response.json()
-            current_status = status_data["status"]
-            progress = status_data["progress_percentage"]
-            elapsed = status_data["elapsed_time"]
-            
-            # Update status message
-            status_text = get_status_text(current_status, creator_id, progress, elapsed, start_time)
-            await status_msg.edit_text(status_text)
-            
-            # Check if completed
-            if current_status in ["completed", "error", "cancelled"]:
-                break
-            
-            # Wait before next check
-            await asyncio.sleep(2)
+            try:
+                status_response = requests.get(f"{api_server}/api/scrape/status/{task_id}", timeout=10)
+                
+                if status_response.status_code != 200:
+                    await asyncio.sleep(3)
+                    continue
+                
+                status_data = status_response.json()
+                current_status = status_data["status"]
+                progress = status_data.get("progress_percentage", 0)
+                processed = status_data.get("progress", 0)
+                total = status_data.get("total", 0)
+                elapsed = status_data.get("elapsed_time", 0)
+                
+                # Send quiz IDs JSON when ready
+                if not quiz_ids_json_sent and status_data.get('quiz_ids_ready'):
+                    await download_and_send_quiz_ids(client, user_id, api_server, task_id, creator_id)
+                    quiz_ids_json_sent = True
+                
+                # Update status message
+                status_text = get_status_text(current_status, creator_id, processed, total, progress, elapsed)
+                await status_msg.edit_text(status_text)
+                
+                # Check if completed or error
+                if current_status in ["completed", "error", "cancelled"]:
+                    break
+                
+                # Wait before next check
+                await asyncio.sleep(3)
+                
+            except requests.exceptions.RequestException:
+                # If current server fails, try next one
+                api_server = get_api_server()
+                await status_msg.edit_text(f"🔁 Server issue, switching to: {api_server}")
+                await asyncio.sleep(2)
+                continue
         
         # Handle final status
         if status_data["status"] == "completed" and status_data.get("download_ready"):
-            # Download and send the file
-            download_response = requests.get(f"{api_server}/api/scrape/download/{task_id}")
-            
-            if download_response.status_code == 200:
-                # Save file temporarily
-                zip_filename = f"creator_{creator_id}_results.zip"
-                with open(zip_filename, "wb") as f:
-                    f.write(download_response.content)
-                
-                # Send to user
-                elapsed_total = time.time() - start_time
-                await client.send_document(
-                    user_id,
-                    document=zip_filename,
-                    caption=(
-                        f"✅ Scraping complete!\n"
-                        f"• Creator: {creator_id}\n"
-                        f"• Pages: {page_num}\n"
-                        f"• Workers: {workers}\n"
-                        f"• Time taken: {elapsed_total:.1f}s\n"
-                        f"• API Server: {api_server}\n"
-                        f"• By: {STYLISH_SIGNATURE}"
-                    )
-                )
-                
-                # Cleanup
-                try:
-                    os.remove(zip_filename)
-                except:
-                    pass
-                
-                await status_msg.edit_text("✅ Scraping completed successfully!")
+            # Download and send the zip file
+            success = await download_and_send_quizzes(client, user_id, api_server, task_id, creator_id, page_num, start_time)
+            if success:
+                await status_msg.edit_text("✅ Scraping completed successfully! Check your files above. 📁")
             else:
-                await status_msg.edit_text("❌ Failed to download results from API server.")
+                await status_msg.edit_text("❌ Failed to download quiz files.")
         
         elif status_data["status"] == "error":
             error_msg = status_data.get("error", "Unknown error")
@@ -1856,19 +1851,85 @@ async def distributed_scraping_process(client, user_id, creator_id, page_num, wo
         
         # Cleanup task on API server
         try:
-            requests.post(f"{api_server}/api/scrape/cleanup/{task_id}")
+            requests.post(f"{api_server}/api/scrape/cleanup/{task_id}", timeout=5)
         except:
             pass
             
     except Exception as e:
         await status_msg.edit_text(f"❌ Error in distributed scraping: {str(e)}")
 
-def get_status_text(status, creator_id, progress, elapsed, start_time):
+async def download_and_send_quiz_ids(client, user_id, api_server, task_id, creator_id):
+    """Download and send quiz IDs JSON file."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{api_server}/api/scrape/download/quiz-ids/{task_id}") as response:
+                if response.status == 200:
+                    # Save file temporarily
+                    json_filename = f"quiz_ids_{creator_id}.json"
+                    with open(json_filename, "wb") as f:
+                        f.write(await response.read())
+                    
+                    # Send to user
+                    await client.send_document(
+                        user_id,
+                        document=json_filename,
+                        caption=f"📊 Quiz IDs found for creator {creator_id}"
+                    )
+                    
+                    # Cleanup
+                    try:
+                        os.remove(json_filename)
+                    except:
+                        pass
+                    return True
+    except Exception as e:
+        print(f"Error sending quiz IDs: {e}")
+    return False
+
+async def download_and_send_quizzes(client, user_id, api_server, task_id, creator_id, page_num, start_time):
+    """Download and send quizzes zip file."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{api_server}/api/scrape/download/quizzes/{task_id}") as response:
+                if response.status == 200:
+                    # Save file temporarily
+                    zip_filename = f"quizzes_{creator_id}.zip"
+                    with open(zip_filename, "wb") as f:
+                        f.write(await response.read())
+                    
+                    # Send to user
+                    elapsed_total = time.time() - start_time
+                    await client.send_document(
+                        user_id,
+                        document=zip_filename,
+                        caption=(
+                            f"✅ Scraping Complete!\n"
+                            f"• Creator: {creator_id}\n"
+                            f"• Pages: {page_num}\n"
+                            f"• Time: {elapsed_total:.1f}s\n"
+                            f"• API: {api_server}\n"
+                            f"• By: {STYLISH_SIGNATURE}"
+                        )
+                    )
+                    
+                    # Cleanup
+                    try:
+                        os.remove(zip_filename)
+                    except:
+                        pass
+                    return True
+    except Exception as e:
+        print(f"Error sending quizzes: {e}")
+    return False
+
+def get_status_text(status, creator_id, processed, total, progress, elapsed):
     """Generate status message text."""
     status_emojis = {
         "starting": "🚀",
         "scraping_ids": "🔍", 
+        "creating_json": "📊",
         "scraping_quizzes": "📝",
+        "zipping": "📦",
         "completed": "✅",
         "error": "❌",
         "cancelled": "⏹️"
@@ -1877,8 +1938,10 @@ def get_status_text(status, creator_id, progress, elapsed, start_time):
     emoji = status_emojis.get(status, "⏳")
     status_map = {
         "starting": "Starting scraping task...",
-        "scraping_ids": "Scraping quiz IDs...",
-        "scraping_quizzes": "Scraping quizzes...",
+        "scraping_ids": "Scraping quiz IDs from pages...",
+        "creating_json": "Creating quiz IDs JSON file...",
+        "scraping_quizzes": "Scraping quizzes content...",
+        "zipping": "Creating zip file...",
         "completed": "Completed!",
         "error": "Error occurred",
         "cancelled": "Cancelled"
@@ -1886,11 +1949,17 @@ def get_status_text(status, creator_id, progress, elapsed, start_time):
     
     status_text = status_map.get(status, status)
     
+    progress_bar = ""
+    if total > 0:
+        filled = int((processed / total) * 10)
+        progress_bar = "[" + "█" * filled + "░" * (10 - filled) + "]"
+    
     return (
         f"{emoji} **Distributed Scraping**\n\n"
         f"• Creator ID: `{creator_id}`\n"
-        f"• Status: {status_text}\n"
-        f"• Progress: {progress}%\n"
+        f"• Status: **{status_text}**\n"
+        f"• Progress: {processed}/{total} ({progress}%)\n"
+        f"• {progress_bar}\n"
         f"• Elapsed: {elapsed:.1f}s\n"
         f"• Using: Distributed API Servers"
     )
@@ -1899,14 +1968,36 @@ def get_status_text(status, creator_id, progress, elapsed, start_time):
 @app.on_message(filters.command("cancel"))
 async def cancel_command_handler(client, message: Message):
     """Cancel ongoing scraping tasks."""
-    # Since we're using APIs, we can't easily track user tasks
-    # You might want to implement a task tracking system
     await message.reply_text(
-        "⚠️ With distributed scraping, cancellation must be handled differently.\n\n"
-        "Currently, tasks will timeout automatically after 1 hour.\n"
-        "For immediate cancellation, please contact the bot administrator."
+        "⚠️ **Distributed Scraping Notice**\n\n"
+        "With the new distributed API system:\n"
+        "• Tasks auto-cleanup after 1 hour\n"
+        "• You'll receive quiz IDs JSON first\n"
+        "• Then quizzes zip file when complete\n"
+        "• Server automatically handles failures\n\n"
+        "For immediate support, contact administrator."
     )
-            
+
+# Add a status command to check API servers
+@app.on_message(filters.command("apistatus"))
+async def api_status_handler(client, message: Message):
+    """Check status of all API servers."""
+    status_msg = await message.reply_text("🔍 Checking API servers status...")
+    
+    results = []
+    for server in API_SERVERS:
+        try:
+            response = requests.get(f"{server}/api/health", timeout=5)
+            if response.status_code == 200:
+                results.append(f"✅ {server} - Healthy")
+            else:
+                results.append(f"❌ {server} - Down ({response.status_code})")
+        except Exception as e:
+            results.append(f"❌ {server} - Error: {str(e)}")
+    
+    status_text = "**API Servers Status:**\n\n" + "\n".join(results)
+    await status_msg.edit_text(status_text)
+    
 @app.on_message(filters.text & ~filters.command([
     "start", "help", "create", "ping", "poll", "cancel", "done", "scr", "tx", "txqz", "htmk", "poll2txt", "shufftxt", "split", 
     "ph", "ai", "ocr", "arrange"
