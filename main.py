@@ -1699,12 +1699,7 @@ async def poll_message_handler(client, message: Message):
         await message.reply_text(f"👍 Parsed poll #{count}. Send more or use /done to finish.")
 # ... (all your existing bot code above) ...
 
-# Add this function with other helper functions
-# Add this function with other helper functions
-# Add these imports at the top
-# Add this configuration
-# Add these imports at the top
-# Add this configuration - UPDATE WITH YOUR ACTUAL API SERVERS
+
 API_SERVERS = [
     "https://site-peda.onrender.com",
 ]
