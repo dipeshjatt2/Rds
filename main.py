@@ -1992,10 +1992,113 @@ async def api_status_handler(client, message: Message):
     
     status_text = "**API Servers Status:**\n\n" + "\n".join(results)
     await status_msg.edit_text(status_text)
+
+
+# ── ZIP & FILE MANAGEMENT (/lo, /do) ──
+
+@app.on_message(filters.command("lo"))
+async def load_zip_handler(client, message: Message):
+    """
+    Loads a zip file and extracts its contents into a named folder.
+    Usage: Reply to a .zip file with /lo [folder_name]
+    """
+    # 1. --- Input Validation ---
+    if not message.reply_to_message or not message.reply_to_message.document:
+        await message.reply_text(
+            "⚠️ **Usage:** Please reply to a `.zip` file with `/lo [folder_name]`."
+        )
+        return
+
+    doc = message.reply_to_message.document
+    if not doc.file_name or not doc.file_name.lower().endswith(".zip"):
+        await message.reply_text("❌ The replied-to file is not a `.zip` file.")
+        return
+
+    try:
+        folder_name = message.text.split(None, 1)[1].strip()
+        # Basic security check for folder name
+        if not folder_name or "/" in folder_name or "\\" in folder_name or "." in folder_name:
+            await message.reply_text("❌ Please provide a valid folder name without special characters.")
+            return
+    except IndexError:
+        await message.reply_text("❌ Please specify a folder name after the command. Example: `/lo anshu`")
+        return
+
+    status_msg = await message.reply_text("⏳ **Processing...**\n\n📥 Downloading zip file...")
+    zip_path = None
+
+    try:
+        # 2. --- Download and Create Folder ---
+        zip_path = await message.reply_to_message.download()
+        folder_path = Path(folder_name)
+        folder_path.mkdir(exist_ok=True) # Create the folder
+
+        await status_msg.edit_text(f"✅ **Download complete!**\n\n🗂️ Unpacking files into `{folder_name}` folder...")
+
+        # 3. --- Unzip the File ---
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            file_count = len(zip_ref.namelist())
+            zip_ref.extractall(folder_path)
+
+        await status_msg.edit_text(
+            f"✅ **Success!**\n\n"
+            f"Successfully unpacked **{file_count}** files into the `{folder_name}` folder."
+        )
+
+    except zipfile.BadZipFile:
+        await status_msg.edit_text("❌ **Error:** The provided file is not a valid zip archive.")
+    except Exception as e:
+        await status_msg.edit_text(f"❌ An unexpected error occurred: {str(e)}")
+    finally:
+        # 4. --- Cleanup ---
+        if zip_path and os.path.exists(zip_path):
+            os.remove(zip_path)
+
+
+@app.on_message(filters.command("do"))
+async def download_file_handler(client, message: Message):
+    """
+    Retrieves a specific .txt file from a specified folder.
+    Usage: /do [folder_name] [file_name_without_extension]
+    """
+    try:
+        # 1. --- Input Validation ---
+        parts = message.text.split(None, 2)
+        if len(parts) < 3:
+            await message.reply_text(
+                "❌ **Usage:** `/do [folder_name] [file_name]`\n\n"
+                "**Example:** `/do anshu 68d14e2825a26c66338bf819`"
+            )
+            return
+        
+        folder_name = parts[1]
+        file_name = parts[2]
+
+        # 2. --- File Path and Existence Check ---
+        # Construct the path and add the .txt extension
+        file_path = Path(folder_name) / f"{file_name}.txt"
+
+        if not file_path.is_file():
+            await message.reply_text(
+                f"❌ **File Not Found!**\n\n"
+                f"Could not find `{file_name}.txt` in the `{folder_name}` folder."
+            )
+            return
+
+        # 3. --- Send the File ---
+        await message.reply_document(
+            document=str(file_path),
+            caption=f"📄 Here is `{file_name}.txt` from the `{folder_name}` folder."
+        )
+
+    except Exception as e:
+        await message.reply_text(f"❌ An unexpected error occurred: {str(e)}")
+
+
     
 @app.on_message(filters.text & ~filters.command([
     "start", "help", "create", "ping", "poll", "cancel", "done", "scr", "tx", "txqz", "htmk", "poll2txt", "shufftxt", "split", 
-    "ph", "ai", "ocr", "arrange"
+    "ph", "ai", "ocr", "lo", "do", "arrange"
 ]))
 
 async def handle_message(client, message: Message):
