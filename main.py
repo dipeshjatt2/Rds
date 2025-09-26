@@ -1,5 +1,6 @@
 # Add these with your other imports at the top of the file
 import zipfile
+from datetime import date 
 import shutil
 from pathlib import Path
 from bs4 import BeautifulSoup
@@ -37,6 +38,32 @@ GEMINI_API_KEY = os.environ.get("aikey") # This is the line you requested
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
 STYLISH_SIGNATURE = "@andr0idpie9" # Stylish "by yourname"
 BOT_START_TIME = datetime.now()
+
+# ── CONFIG ──
+# ... (your existing API_ID, API_HASH, BOT_TOKEN, etc.) ...
+ADMIN_ID = 5203820046  # Your admin user ID
+
+# --- [NEW] Session String Loading ---
+# Automatically loads SESSION_STRING, SESSION_STRING1, SESSION_STRING2, etc.
+SESSION_STRINGS = []
+i = 0
+while True:
+    # Construct the environment variable key
+    session_key = f"SESSION_STRING{i if i > 0 else ''}"
+    session_val = os.environ.get(session_key)
+    
+    if not session_val:
+        break # Stop if the next session string is not found
+    
+    SESSION_STRINGS.append(session_val)
+    i += 1
+
+# ── GLOBAL STATE & CONSTANTS ──
+# ... (your existing user_state, user_sessions) ...
+userbots = [] # Will hold the running userbot clients
+userbot_counter = 0 # For round-robin distribution
+
+
 
 # This HTML template file must be in the same directory as the bot script.
 TEMPLATE_HTML = "format2.html"
@@ -158,6 +185,65 @@ async def shufftxt_handler(client, message: Message):
         await message.reply_text(f"❌ An error occurred while processing the file: {e}")
 
 #dg
+# ── [NEW] Poll Answering Worker Function ──
+async def answer_and_fetch_poll(user_id: int, message: Message, userbot: Client):
+    """
+    Uses a userbot session to answer a poll and fetch the correct result.
+    This function runs concurrently for each poll.
+    """
+    global user_state
+    poll = message.poll
+    correct_index = None
+
+    try:
+        # 1. Vote on the poll with the first option to reveal the answer
+        await userbot.vote_poll(
+            chat_id=message.chat.id,
+            message_id=message.id,
+            options=[0] # Vote for option index 0
+        )
+        await asyncio.sleep(5) # Wait for the vote to be processed
+
+        # 2. Re-fetch the message to get the updated poll data with the correct answer
+        updated_message = await userbot.get_messages(
+            chat_id=message.chat.id,
+            message_ids=message.id
+        )
+
+        # 3. Reliably get the correct_option_id using multiple fallbacks
+        if updated_message and updated_message.poll:
+            updated_poll = updated_message.poll
+            # Primary method: the direct attribute
+            correct_index = getattr(updated_poll, "correct_option_id", None)
+
+            # Fallback method: check which option has a voter (our userbot)
+            if correct_index is None:
+                for i, option in enumerate(updated_poll.options):
+                    if getattr(option, "voter_count", 0) > 0:
+                        correct_index = i
+                        break
+        
+        # Final fallback if all else fails for a quiz poll
+        if correct_index is None and poll.type == PollType.QUIZ:
+            correct_index = 0
+
+    except Exception as e:
+        print(f"[Userbot Error] Failed to vote or fetch update for user {user_id}: {e}")
+        # If voting fails, we have no way to get the answer, so we mark it as unknown (-1)
+        correct_index = -1
+    
+    # 4. Store the complete, correct data
+    # Ensure the user's state still exists before appending
+    if user_id in user_state and user_state[user_id].get("flow") == "poll_collection":
+        user_state[user_id]["polls"].append({
+            "text": poll.question,
+            "options": [opt.text for opt in poll.options],
+            "correctIndex": correct_index,
+            "explanation": getattr(poll, "explanation", "") or ""
+        })
+
+
+
  # <-- Make sure this import is at the top of your script with the others!
 @app.on_message(filters.command("ping"))
 async def ping_handler(client, message: Message):
@@ -1618,85 +1704,145 @@ async def tx_handler(client, message: Message):
 
 
 # ── Poll Collector (/poll & /done) ──
+# ── [REPLACED] Poll Collector Commands (/poll & /done) ──
 
 @app.on_message(filters.command("poll"))
 async def poll_command_handler(client, message: Message):
-    """Initiates a poll collection session for the user."""
+    """
+    Initiates a poll collection session. Includes rate-limiting.
+    """
     uid = message.from_user.id
-    # Initialize the state for this user
+    today = date.today()
+    
+    # --- Rate Limiting Check ---
+    if uid != ADMIN_ID:
+        state = user_state.get(uid, {})
+        last_used = state.get("poll_last_used")
+        usage_count = state.get("poll_usage_count", 0)
+
+        if last_used == today and usage_count >= 3:
+            await message.reply_text("🚫 **Daily Limit Reached!**\nYou can use the `/poll` command up to 3 times per day.")
+            return
+        
+        # Reset count if it's a new day
+        if last_used != today:
+            usage_count = 0
+        
+        user_state.setdefault(uid, {})['poll_usage_count'] = usage_count + 1
+        user_state[uid]['poll_last_used'] = today
+
+    # --- Session Availability Check ---
+    if not userbots:
+        await message.reply_text("❌ **Service Unavailable:** The poll answering feature is not configured by the bot owner. No user sessions are active.")
+        return
+
+    # --- Initialize State for Poll Collection ---
     user_state[uid] = {
+        **user_state.get(uid, {}), # Preserve rate-limit info
         "flow": "poll_collection", 
-        "polls": []
+        "polls": [], # Stores final, correct poll data
+        "tasks": []  # Stores background tasks for concurrent processing
     }
     await message.reply_text(
-        "✅ OK! I'm ready to collect your quiz polls.\n\n"
-        "Please send me the polls one by one. When you're finished, send the /done command."
+        "✅ **Session Started!**\n\n"
+        "I'm ready to collect and answer your quiz polls.\n"
+        "Send me the polls one by one (max 300).\n\n"
+        "When you're finished, send the **/done** command."
     )
 
 @app.on_message(filters.command("done"))
 async def done_command_handler(client, message: Message):
-    """Finalizes the poll collection, formats, and sends the .txt file."""
+    """
+    Finalizes poll collection, waits for all polls to be answered, formats, and sends the .txt file.
+    """
     uid = message.from_user.id
 
-    # Check if the user is in the correct flow
     if user_state.get(uid, {}).get("flow") != "poll_collection":
-        # User might have typed /done by accident without starting /poll
         return
 
-    collected_polls = user_state[uid].get("polls", [])
+    state = user_state[uid]
+    pending_tasks = state.get("tasks", [])
+
+    # Wait for all background answering tasks to complete
+    if pending_tasks:
+        status_msg = await message.reply_text(f"⏳ Finalizing... Waiting for **{len(pending_tasks)}** polls to be processed.")
+        await asyncio.gather(*pending_tasks)
+        await status_msg.delete()
+
+    collected_polls = state.get("polls", [])
 
     if not collected_polls:
-        await message.reply_text("You haven't sent any polls to collect. Use /poll to start.")
-        del user_state[uid] # Clean up state
+        await message.reply_text("🤷 You haven't sent any polls to process. The session is now closed.")
+        del user_state[uid]
         return
 
-    await message.reply_text(f"👍 Got it! Formatting {len(collected_polls)} polls into a text file...")
+    await message.reply_text(f"👍 All polls processed! Formatting **{len(collected_polls)}** polls into a text file...")
 
-    # --- Format the collected polls into the specified text format ---
-    out_lines = []
-    for i, poll_data in enumerate(collected_polls, start=1):
-        # Add the question line
-        out_lines.append(f"{i}. {poll_data['question']}")
+    # --- Format the output file (like /poll2txt) ---
+    lines = []
+    option_labels = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]
+    for idx, q in enumerate(collected_polls, start=1):
+        lines.append(f"{idx}. {q['text']}")
+
+        for i, option in enumerate(q.get("options", [])):
+            correct_mark = " ✅" if q.get("correctIndex") == i else ""
+            label = option_labels[i] if i < len(option_labels) else str(i + 1)
+            lines.append(f"({label}) {option}{correct_mark}")
+
+        explanation = q.get("explanation", "")
+        if explanation:
+            lines.append(f"Ex: “{explanation}”")
+        else:
+            lines.append("Ex: ")
         
-        # Add the option lines with (a), (b), etc.
-        for idx, opt_text in enumerate(poll_data['options']):
-            prefix = f"({chr(97 + idx)})" # chr(97) is 'a'
-            out_lines.append(f"{prefix} {opt_text}")
-        
-        # Add a blank line for spacing between questions
-        out_lines.append("") 
+        lines.append("") # Two blank lines for spacing
+        lines.append("")
 
     # --- Create and send the document ---
-    final_txt = "\n".join(out_lines).strip()
+    final_txt = "\n".join(lines).strip()
     file_obj = io.BytesIO(final_txt.encode("utf-8-sig"))
-    file_obj.name = f"collected_polls_from_{uid}.txt"
+    file_obj.name = f"answered_polls_{uid}.txt"
 
     await message.reply_document(
         file_obj,
-        caption=f"✅ Here are your {len(collected_polls)} collected polls."
+        caption=f"✅ **Done!** Here are your {len(collected_polls)} answered polls."
     )
     
-    # --- Crucial: Clean up the user's state after finishing ---
-    del user_state[uid]
+    del user_state[uid] # Clean up state
 
-# This handler specifically listens for incoming polls
-@app.on_message(filters.poll, group=2) # Using a group to ensure it's checked
+# --- [REPLACED] Poll Message Handler ---
+@app.on_message(filters.poll, group=2)
 async def poll_message_handler(client, message: Message):
-    """Catches polls sent by a user who is in a poll_collection session."""
+    """
+    Catches polls, checks if the user is in a poll_collection session,
+    and assigns the poll to a userbot for processing.
+    """
     uid = message.from_user.id
     
-    # Only process this poll if the user has started the /poll flow
     if user_state.get(uid, {}).get("flow") == "poll_collection":
-        poll = message.poll
+        state = user_state[uid]
         
-        # Store the necessary information
-        user_state[uid]["polls"].append({
-            "question": poll.question,
-            "options": [opt.text for opt in poll.options]
-        })
+        # Check max poll limit for this session
+        # We check polls collected + tasks queued to get the true count
+        if len(state.get("polls", [])) + len(state.get("tasks", [])) >= 100:
+            if not state.get("limit_notified"): # Only send this message once
+                await message.reply_text("⚠️ **Max Limit Reached!**\n\nYou have sent 100 polls. Please use **/done** to finalize the process.")
+                state["limit_notified"] = True
+            return
+
+        # --- Round-robin distribution of tasks to userbots ---
+        global userbot_counter
+        selected_bot = userbots[userbot_counter % len(userbots)]
+        userbot_counter += 1
         
-        count = len(user_state[uid]["polls"])
-        await message.reply_text(f"👍 Parsed poll #{count}. Send more or use /done to finish.")
+        # Create a background task to answer the poll without blocking the main bot
+        task = asyncio.create_task(answer_and_fetch_poll(uid, message, selected_bot))
+        state["tasks"].append(task)
+        
+        await message.reply_text(f"👍 Queued poll #{len(state['tasks'])} for answering.")
+
+
+
 # ... (all your existing bot code above) ...
 
 
@@ -2219,9 +2365,35 @@ async def handle_message(client, message: Message):
 #end
 
 # ── RUN BOT ──
+# ── RUN BOT (add this async main function to handle userbot startup) ──
+async def main():
+    global userbots
+    # Start all userbot clients concurrently
+    if SESSION_STRINGS:
+        print(f"✅ Found {len(SESSION_STRINGS)} session strings. Starting userbots...")
+        for i, session in enumerate(SESSION_STRINGS):
+            bot = Client(f"userbot_session_{i}", session_string=session, api_id=API_ID, api_hash=API_HASH, in_memory=True)
+            userbots.append(bot)
+        
+        await asyncio.gather(*(bot.start() for bot in userbots))
+        print("✅ All userbot clients started.")
+    else:
+        print("⚠️ WARNING: No SESSION_STRING environment variables found. Poll answering will be disabled.")
+
+    # Start the main bot
+    await app.start()
+    print("✅ Main bot is running...")
+    from pyrogram import idle
+    await idle() # Keep the bot alive
+
+    # Stop all clients gracefully on shutdown
+    await app.stop()
+    if userbots:
+        await asyncio.gather(*(bot.stop() for bot in userbots))
+
 if __name__ == "__main__":
     if not BOT_TOKEN:
         print("Error: BOT_TOKEN environment variable not set.")
     else:
-        print("Bot is running...")
-        app.run()
+        # Run the async main function
+        asyncio.run(main())
