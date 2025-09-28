@@ -139,22 +139,27 @@ private_session_locks: Dict[Tuple[int,int], asyncio.Lock] = {}
 group_session_locks: Dict[Tuple[int,str], asyncio.Lock] = {}
 ongoing_sessions = {}
 POLL_ID_TO_SESSION_MAP: Dict[str, Dict[str, Any]] = {}
+# --- REPLACE your old generate_quiz_html function with this one ---
 
 async def generate_quiz_html(quiz_settings: dict, questions: list) -> str | None:
     """
-    [DEBUG VERSION] Generates a standalone HTML file and logs each step.
+    Generates a standalone, interactive HTML file from quiz data for the new template.
+
+    Args:
+        quiz_settings: A dictionary with quiz settings like total time and negative marks.
+        questions: A list of question objects from the session.
+
+    Returns:
+        The file path to the generated temporary HTML file, or None on failure.
     """
     try:
-        print("--- Starting HTML Generation ---")
-
-        # 1. Read the template
+        # 1. Read the HTML template
         with open("format.html", "r", encoding="utf-8") as f:
             html_template = f.read()
-        print(f"✅ STEP 1: format.html read successfully. Length: {len(html_template)} characters.")
-        if "tense" in html_template:
-             print("⚠️ WARNING: The word 'tense' was found in the original format.html file.")
 
-        # 2. Build the full quiz object
+        # 2. Build the full quiz object required by the new HTML template.
+        #    The `questions` list from the session already has the correct format
+        #    ('text', 'options', 'correctIndex', etc.), so we don't need to convert it.
         full_quiz_object = {
             "settings": {
                 "totalTimeSec": quiz_settings.get("totalTimeSec", 600),
@@ -162,32 +167,26 @@ async def generate_quiz_html(quiz_settings: dict, questions: list) -> str | None
             },
             "questions": questions
         }
+        
+        # 3. Convert the entire object to a JSON string
         quiz_data_json = json.dumps(full_quiz_object, ensure_ascii=False, indent=2)
-        print(f"✅ STEP 2: Quiz data converted to JSON. Length: {len(quiz_data_json)} characters.")
 
-        # 3. Replace the data placeholder
+        # 4. Replace the new placeholder in the template
         final_html = html_template.replace(
             "/* QUIZ_DATA_PLACEHOLDER */",
             quiz_data_json
         )
-        print(f"✅ STEP 3: Replaced data placeholder. New HTML length: {len(final_html)} characters.")
 
-        # 4. Replace the title placeholder
-        final_html = final_html.replace(
-             "",
-             quiz_settings.get("title", "Quiz Practice")
-        )
-        print(f"✅ STEP 4: Replaced title placeholder. Final HTML length: {len(final_html)} characters.")
-
-        # 5. Save to a temporary file
+        # 5. Save to a temporary file and return the path
         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".html", encoding="utf-8") as temp_f:
             temp_f.write(final_html)
-            print(f"✅ STEP 5: Successfully wrote to temporary file: {temp_f.name}")
-            print("--- HTML Generation Complete ---")
             return temp_f.name
 
+    except FileNotFoundError:
+        print("CRITICAL ERROR: The 'format.html' template file was not found.")
+        return None
     except Exception as e:
-        print(f"❌ ERROR in generate_quiz_html: {e}")
+        print(f"An unexpected error occurred in generate_quiz_html: {e}")
         traceback.print_exc()
         return None
 
@@ -1292,7 +1291,6 @@ async def finalize_attempt(bot, session_key, session_data):
         total_quiz_time_sec = len(session_data["questions"]) * session_data.get("time_per_question_sec", 30)
         
         quiz_settings = {
-            "title": quiz_row["title"],
             "totalTimeSec": total_quiz_time_sec,
             "negativeMark": negative
         }
@@ -1575,7 +1573,6 @@ async def group_finalize_and_export(bot, session_key):
         total_quiz_time_sec = len(session["questions"]) * session.get("time_per_question_sec", 30)
         
         quiz_settings = {
-            "title": session.get("title", f"Quiz {quiz_id}"),
             "totalTimeSec": total_quiz_time_sec,
             "negativeMark": session.get("negative", 0.0)
         }
