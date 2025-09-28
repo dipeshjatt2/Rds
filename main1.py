@@ -43,6 +43,12 @@ OWNER_ID = 5203820046
 DB_PATH = "quizzes.db"
 SESSION_DIR = "sessions"
 os.makedirs(SESSION_DIR, exist_ok=True)
+ 
+# +++ ADD THESE LINES +++
+
+POLL_QUESTION_MAX_LENGTH = 250
+PLACEHOLDER_QUESTION = "⬆️ LOOK AT THE MESSAGE ABOVE FOR THE QUESTION ⬆️"
+
 
 if not BOT_TOKEN:
     raise SystemExit("BOT_TOKEN env var required. Please set it in your environment.")
@@ -969,13 +975,24 @@ async def send_question_for_session_private(bot, session_key):
         except Exception as e:
             print(f"Failed to send photo for private quiz (will continue): {e}")
 
+    # ... (inside the function)
     explanation = q.get("explanation") or None
+    question_text = q.get("text")
+    poll_question_text = question_text
+
+    # Check if the question is too long for a poll
+    if len(question_text) > POLL_QUESTION_MAX_LENGTH:
+        # Send the long question as a separate message first
+        await bot.send_message(chat_id=session["chat_id"], text=question_text)
+        # Use a placeholder for the poll question
+        poll_question_text = PLACEHOLDER_QUESTION
+
     sent = None
     for attempt in range(3): # Retry up to 3 times
         try:
             sent = await bot.send_poll(
                 chat_id=session["chat_id"],
-                question=q.get("text"),
+                question=poll_question_text,  # <-- Use the new variable here
                 options=q.get("options"),
                 type=Poll.QUIZ,
                 correct_option_id=q.get("correctIndex", 0),
@@ -984,6 +1001,7 @@ async def send_question_for_session_private(bot, session_key):
                 explanation=explanation
             )
             break # Success, break the loop
+# ... (rest of the function)
         except Exception as e:
             print(f"Attempt {attempt + 1} failed to send private poll: {e}")
             if attempt < 2: # If not the last attempt
@@ -1272,13 +1290,24 @@ async def group_send_question(bot, session_key):
         except Exception as e:
             print(f"Failed to send photo for group quiz (will continue): {e}")
 
+    # ... (inside the function)
     explanation = q.get("explanation") or None
+    question_text = q.get("text")
+    poll_question_text = question_text
+
+    # Check if the question is too long for a poll
+    if len(question_text) > POLL_QUESTION_MAX_LENGTH:
+        # Send the long question as a separate message first
+        await bot.send_message(chat_id=session["chat_id"], text=question_text)
+        # Use a placeholder for the poll question
+        poll_question_text = PLACEHOLDER_QUESTION
+        
     sent = None
     for attempt in range(3): # Retry up to 3 times
         try:
             sent = await bot.send_poll(
                 chat_id=session["chat_id"],
-                question=q.get("text"),
+                question=poll_question_text, # <-- Use the new variable here
                 options=q.get("options"),
                 type=Poll.QUIZ,
                 correct_option_id=q.get("correctIndex", 0),
@@ -1287,6 +1316,7 @@ async def group_send_question(bot, session_key):
                 explanation=explanation
             )
             break # Success
+# ... (rest of the function)
         except Exception as e:
             print(f"Attempt {attempt + 1} failed to send group poll: {e}")
             if attempt < 2:
