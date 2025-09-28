@@ -140,6 +140,59 @@ group_session_locks: Dict[Tuple[int,str], asyncio.Lock] = {}
 ongoing_sessions = {}
 POLL_ID_TO_SESSION_MAP: Dict[str, Dict[str, Any]] = {}
 
+# --- ADD THIS ENTIRE NEW FUNCTION ---
+
+async def generate_quiz_html(quiz_title: str, questions: list) -> str | None:
+    """
+    Generates a standalone, interactive HTML file for practicing a quiz.
+
+    Args:
+        quiz_title: The title of the quiz.
+        questions: A list of question objects from the session.
+
+    Returns:
+        The file path to the generated temporary HTML file, or None on failure.
+    """
+    try:
+        # 1. Read the HTML template from disk
+        with open("format.html", "r", encoding="utf-8") as f:
+            html_template = f.read()
+
+        # 2. Convert session questions to the format required by the HTML's JavaScript
+        # Python format: {'text': '...', 'options': [...], 'correctIndex': N, ...}
+        # HTML JS format: {'question': '...', 'options': [...], 'correct_answer_index': N, ...}
+        formatted_questions = []
+        for q in questions:
+            formatted_questions.append({
+                "question": q.get("text", "No question text found"),
+                "options": q.get("options", []),
+                "correct_answer_index": q.get("correctIndex", 0),
+                "explanation": q.get("explanation", "No explanation available.")
+            })
+        
+        # 3. Convert the list of questions to a JSON string
+        quiz_data_json = json.dumps(formatted_questions, ensure_ascii=False, indent=2)
+
+        # 4. Replace the placeholder in the template with our JSON data
+        final_html = html_template.replace(
+            "// QUIZ_DATA_PLACEHOLDER",
+            quiz_data_json
+        )
+
+        # 5. Save the final HTML to a temporary file
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".html", encoding="utf-8") as temp_f:
+            temp_f.write(final_html)
+            # Return the path to the newly created file
+            return temp_f.name
+
+    except FileNotFoundError:
+        print("CRITICAL ERROR: The 'format.html' template file was not found.")
+        return None
+    except Exception as e:
+        print(f"An unexpected error occurred in generate_quiz_html: {e}")
+        traceback.print_exc()
+        return None
+        
 def get_private_lock(key: Tuple[int,int]):
     if key not in private_session_locks:
         private_session_locks[key] = asyncio.Lock()
@@ -1233,6 +1286,23 @@ async def finalize_attempt(bot, session_key, session_data):
                (finished_at, json.dumps(session_data["answers"]), total, maxscore, session_data["attempt_id"]))
     try:
         await bot.send_message(session_data["user_id"], f" ✅ Quiz finished! Your score: {total}/{maxscore}")
+        #html
+        html_path = await generate_quiz_html(
+            quiz_row["title"],
+            session_data["questions"]
+        )
+        if html_path:
+            try:
+                await bot.send_document(
+                    session_data["user_id"],
+                    document=open(html_path, "rb"),
+                    caption="Here is an HTML file for you to practice this quiz again.",
+                    filename=f"{session_data['quiz_id']}_practice.html"
+                )
+            except Exception as e:
+                print(f"Failed to send practice HTML to user {session_data['user_id']}: {e}")
+            finally:
+                os.remove(html_path)  # Clean up the temp file
     except:
         pass
     path = get_private_session_path(*session_key)
@@ -1487,6 +1557,23 @@ async def group_finalize_and_export(bot, session_key):
     final_message = "\n".join(msg_lines)
     try:
         await bot.send_message(chat_id, final_message)
+        #html
+        html_path = await generate_quiz_html(
+            session.get("title", f"Quiz {quiz_id}"),
+            session["questions"]
+        )
+        if html_path:
+            try:
+                await bot.send_document(
+                    chat_id,
+                    document=open(html_path, "rb"),
+                    caption="Practice this quiz again with the attached HTML file.",
+                    filename=f"{quiz_id}_practice.html"
+                )
+            except Exception as e:
+                print(f"Failed to send practice HTML to group {chat_id}: {e}")
+            finally:
+                os.remove(html_path)  # Clean up the temp file
     except Exception as e:
         print(f"Error sending final group results: {e}")
     
