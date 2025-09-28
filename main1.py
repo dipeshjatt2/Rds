@@ -1282,45 +1282,40 @@ async def finalize_attempt(bot, session_key, session_data):
     finished_at = datetime.utcnow().isoformat()
     db_execute("UPDATE attempts SET finished_at=?, answers_json=?, score=?, max_score=? WHERE id=?",
                (finished_at, json.dumps(session_data["answers"]), total, maxscore, session_data["attempt_id"]))
-    try:
-        await bot.send_message(session_data["user_id"], f" ✅ Quiz finished! Your score: {total}/{maxscore}")
-        #html
-        # In function: async def finalize_attempt(bot, session_key, session_data):
-
-# --- FIND AND REPLACE THE OLD HTML-GENERATING BLOCK WITH THIS ---
-try:
-    # Calculate total time for the settings object
-    total_quiz_time_sec = len(session_data["questions"]) * session_data.get("time_per_question_sec", 30)
     
-    quiz_settings = {
-        "totalTimeSec": total_quiz_time_sec,
-        "negativeMark": negative # 'negative' is already calculated in this function
-    }
+    try:
+        # Send the score message first
+        await bot.send_message(session_data["user_id"], f" ✅ Quiz finished! Your score: {total}/{maxscore}")
 
-    html_path = await generate_quiz_html(
-        quiz_settings,
-        session_data["questions"]
-    )
-    if html_path:
-        try:
-            await bot.send_document(
-                session_data["user_id"],
-                document=open(html_path, "rb"),
-                caption="Here is an HTML file for you to practice this quiz again.",
-                filename=f"{session_data['quiz_id']}_practice.html"
-            )
-        except Exception as e:
-            print(f"Failed to send practice HTML to user {session_data['user_id']}: {e}")
-        finally:
-            os.remove(html_path)  # Clean up the temp file
-except Exception as e:
-    print(f"Error during HTML generation/sending for private quiz: {e}")
-# --- END OF REPLACEMENT BLOCK ---
+        # Now, generate and send the HTML file
+        total_quiz_time_sec = len(session_data["questions"]) * session_data.get("time_per_question_sec", 30)
+        
+        quiz_settings = {
+            "totalTimeSec": total_quiz_time_sec,
+            "negativeMark": negative
+        }
 
-    except:
-        pass
+        html_path = await generate_quiz_html(
+            quiz_settings,
+            session_data["questions"]
+        )
+        if html_path:
+            try:
+                await bot.send_document(
+                    session_data["user_id"],
+                    document=open(html_path, "rb"),
+                    caption="Here is an HTML file for you to practice this quiz again.",
+                    filename=f"{session_data['quiz_id']}_practice.html"
+                )
+            finally:
+                os.remove(html_path)  # Always clean up the temp file
+
+    except Exception as e:
+        print(f"Error sending message or HTML file in finalize_attempt: {e}")
+    
     path = get_private_session_path(*session_key)
     await delete_session_file(path, session_key, private_session_locks)
+
 
 async def finish_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
@@ -1569,46 +1564,38 @@ async def group_finalize_and_export(bot, session_key):
             msg_lines.append(line)
         msg_lines.append("\n🏆 Congratulations to the winners!")
     final_message = "\n".join(msg_lines)
-    try:
-        await bot.send_message(chat_id, final_message)
-        #html
-        # In function: async def group_finalize_and_export(bot, session_key):
-
-# --- FIND AND REPLACE THE OLD HTML-GENERATING BLOCK WITH THIS ---
-try:
-    # Calculate total time for the settings object
-    total_quiz_time_sec = len(session["questions"]) * session.get("time_per_question_sec", 30)
     
-    quiz_settings = {
-        "totalTimeSec": total_quiz_time_sec,
-        "negativeMark": session.get("negative", 0.0)
-    }
+    try:
+        # Send the result message
+        await bot.send_message(chat_id, final_message)
 
-    html_path = await generate_quiz_html(
-        quiz_settings,
-        session["questions"]
-    )
-    if html_path:
-        try:
-            await bot.send_document(
-                chat_id,
-                document=open(html_path, "rb"),
-                caption="Practice this quiz again with the attached HTML file.",
-                filename=f"{quiz_id}_practice.html"
-            )
-        except Exception as e:
-            print(f"Failed to send practice HTML to group {chat_id}: {e}")
-        finally:
-            os.remove(html_path)  # Clean up the temp file
-except Exception as e:
-    print(f"Error during HTML generation/sending for group quiz: {e}")
-# --- END OF REPLACEMENT BLOCK ---
+        # Generate and send the HTML file
+        total_quiz_time_sec = len(session["questions"]) * session.get("time_per_question_sec", 30)
+        
+        quiz_settings = {
+            "totalTimeSec": total_quiz_time_sec,
+            "negativeMark": session.get("negative", 0.0)
+        }
 
+        html_path = await generate_quiz_html(
+            quiz_settings,
+            session["questions"]
+        )
+        if html_path:
+            try:
+                await bot.send_document(
+                    chat_id,
+                    document=open(html_path, "rb"),
+                    caption="Practice this quiz again with the attached HTML file.",
+                    filename=f"{quiz_id}_practice.html"
+                )
+            finally:
+                os.remove(html_path) # Always clean up the temp file
+    
     except Exception as e:
-        print(f"Error sending final group results: {e}")
+        print(f"Error sending final group results or HTML: {e}")
     
     await delete_session_file(path, session_key, group_session_locks, running_group_tasks)
-
 # --- BACKUP & RESTORE ---
 async def backup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != OWNER_ID:
