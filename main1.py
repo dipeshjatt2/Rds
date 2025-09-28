@@ -140,49 +140,47 @@ group_session_locks: Dict[Tuple[int,str], asyncio.Lock] = {}
 ongoing_sessions = {}
 POLL_ID_TO_SESSION_MAP: Dict[str, Dict[str, Any]] = {}
 
-# --- ADD THIS ENTIRE NEW FUNCTION ---
+# --- REPLACE your old generate_quiz_html function with this one ---
 
-async def generate_quiz_html(quiz_title: str, questions: list) -> str | None:
+async def generate_quiz_html(quiz_settings: dict, questions: list) -> str | None:
     """
-    Generates a standalone, interactive HTML file for practicing a quiz.
+    Generates a standalone, interactive HTML file from quiz data for the new template.
 
     Args:
-        quiz_title: The title of the quiz.
+        quiz_settings: A dictionary with quiz settings like total time and negative marks.
         questions: A list of question objects from the session.
 
     Returns:
         The file path to the generated temporary HTML file, or None on failure.
     """
     try:
-        # 1. Read the HTML template from disk
+        # 1. Read the HTML template
         with open("format.html", "r", encoding="utf-8") as f:
             html_template = f.read()
 
-        # 2. Convert session questions to the format required by the HTML's JavaScript
-        # Python format: {'text': '...', 'options': [...], 'correctIndex': N, ...}
-        # HTML JS format: {'question': '...', 'options': [...], 'correct_answer_index': N, ...}
-        formatted_questions = []
-        for q in questions:
-            formatted_questions.append({
-                "question": q.get("text", "No question text found"),
-                "options": q.get("options", []),
-                "correct_answer_index": q.get("correctIndex", 0),
-                "explanation": q.get("explanation", "No explanation available.")
-            })
+        # 2. Build the full quiz object required by the new HTML template.
+        #    The `questions` list from the session already has the correct format
+        #    ('text', 'options', 'correctIndex', etc.), so we don't need to convert it.
+        full_quiz_object = {
+            "settings": {
+                "totalTimeSec": quiz_settings.get("totalTimeSec", 600),
+                "negativeMarkPerWrong": quiz_settings.get("negativeMark", 0.0)
+            },
+            "questions": questions
+        }
         
-        # 3. Convert the list of questions to a JSON string
-        quiz_data_json = json.dumps(formatted_questions, ensure_ascii=False, indent=2)
+        # 3. Convert the entire object to a JSON string
+        quiz_data_json = json.dumps(full_quiz_object, ensure_ascii=False, indent=2)
 
-        # 4. Replace the placeholder in the template with our JSON data
+        # 4. Replace the new placeholder in the template
         final_html = html_template.replace(
-            "// QUIZ_DATA_PLACEHOLDER",
+            "/* QUIZ_DATA_PLACEHOLDER */",
             quiz_data_json
         )
 
-        # 5. Save the final HTML to a temporary file
+        # 5. Save to a temporary file and return the path
         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".html", encoding="utf-8") as temp_f:
             temp_f.write(final_html)
-            # Return the path to the newly created file
             return temp_f.name
 
     except FileNotFoundError:
@@ -192,7 +190,7 @@ async def generate_quiz_html(quiz_title: str, questions: list) -> str | None:
         print(f"An unexpected error occurred in generate_quiz_html: {e}")
         traceback.print_exc()
         return None
-        
+
 def get_private_lock(key: Tuple[int,int]):
     if key not in private_session_locks:
         private_session_locks[key] = asyncio.Lock()
@@ -1287,22 +1285,38 @@ async def finalize_attempt(bot, session_key, session_data):
     try:
         await bot.send_message(session_data["user_id"], f" ✅ Quiz finished! Your score: {total}/{maxscore}")
         #html
-        html_path = await generate_quiz_html(
-            quiz_row["title"],
-            session_data["questions"]
-        )
-        if html_path:
-            try:
-                await bot.send_document(
-                    session_data["user_id"],
-                    document=open(html_path, "rb"),
-                    caption="Here is an HTML file for you to practice this quiz again.",
-                    filename=f"{session_data['quiz_id']}_practice.html"
-                )
-            except Exception as e:
-                print(f"Failed to send practice HTML to user {session_data['user_id']}: {e}")
-            finally:
-                os.remove(html_path)  # Clean up the temp file
+        # In function: async def finalize_attempt(bot, session_key, session_data):
+
+# --- FIND AND REPLACE THE OLD HTML-GENERATING BLOCK WITH THIS ---
+try:
+    # Calculate total time for the settings object
+    total_quiz_time_sec = len(session_data["questions"]) * session_data.get("time_per_question_sec", 30)
+    
+    quiz_settings = {
+        "totalTimeSec": total_quiz_time_sec,
+        "negativeMark": negative # 'negative' is already calculated in this function
+    }
+
+    html_path = await generate_quiz_html(
+        quiz_settings,
+        session_data["questions"]
+    )
+    if html_path:
+        try:
+            await bot.send_document(
+                session_data["user_id"],
+                document=open(html_path, "rb"),
+                caption="Here is an HTML file for you to practice this quiz again.",
+                filename=f"{session_data['quiz_id']}_practice.html"
+            )
+        except Exception as e:
+            print(f"Failed to send practice HTML to user {session_data['user_id']}: {e}")
+        finally:
+            os.remove(html_path)  # Clean up the temp file
+except Exception as e:
+    print(f"Error during HTML generation/sending for private quiz: {e}")
+# --- END OF REPLACEMENT BLOCK ---
+
     except:
         pass
     path = get_private_session_path(*session_key)
@@ -1558,22 +1572,38 @@ async def group_finalize_and_export(bot, session_key):
     try:
         await bot.send_message(chat_id, final_message)
         #html
-        html_path = await generate_quiz_html(
-            session.get("title", f"Quiz {quiz_id}"),
-            session["questions"]
-        )
-        if html_path:
-            try:
-                await bot.send_document(
-                    chat_id,
-                    document=open(html_path, "rb"),
-                    caption="Practice this quiz again with the attached HTML file.",
-                    filename=f"{quiz_id}_practice.html"
-                )
-            except Exception as e:
-                print(f"Failed to send practice HTML to group {chat_id}: {e}")
-            finally:
-                os.remove(html_path)  # Clean up the temp file
+        # In function: async def group_finalize_and_export(bot, session_key):
+
+# --- FIND AND REPLACE THE OLD HTML-GENERATING BLOCK WITH THIS ---
+try:
+    # Calculate total time for the settings object
+    total_quiz_time_sec = len(session["questions"]) * session.get("time_per_question_sec", 30)
+    
+    quiz_settings = {
+        "totalTimeSec": total_quiz_time_sec,
+        "negativeMark": session.get("negative", 0.0)
+    }
+
+    html_path = await generate_quiz_html(
+        quiz_settings,
+        session["questions"]
+    )
+    if html_path:
+        try:
+            await bot.send_document(
+                chat_id,
+                document=open(html_path, "rb"),
+                caption="Practice this quiz again with the attached HTML file.",
+                filename=f"{quiz_id}_practice.html"
+            )
+        except Exception as e:
+            print(f"Failed to send practice HTML to group {chat_id}: {e}")
+        finally:
+            os.remove(html_path)  # Clean up the temp file
+except Exception as e:
+    print(f"Error during HTML generation/sending for group quiz: {e}")
+# --- END OF REPLACEMENT BLOCK ---
+
     except Exception as e:
         print(f"Error sending final group results: {e}")
     
