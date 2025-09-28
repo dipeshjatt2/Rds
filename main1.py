@@ -11,6 +11,7 @@ import random
 import traceback
 import string
 import glob
+import uuid
 import shutil
 import tempfile
 import pytz
@@ -23,6 +24,8 @@ from telegram import (
     InlineKeyboardMarkup,
     InlineKeyboardButton,
     Poll,
+    InlineQueryResultArticle,
+    InputTextMessageContent,
 )
 from telegram.ext import (
     Application,
@@ -34,6 +37,7 @@ from telegram.ext import (
     PollHandler,
     filters,
     JobQueue,
+    InlineQueryHandler,
 )
 from telegram.constants import ParseMode
 
@@ -788,8 +792,8 @@ async def view_quiz_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     txt = (f"Quiz ID: {quiz_id}\nTitle: {qrow['title']}\n"
            f"Creator: {creator['username'] or creator['display_name']}\nQuestions: {len(qrows)}\n\nPreview:\n" + "\n".join(preview))
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Delete", callback_data=f"deletequiz:{quiz_id}"), InlineKeyboardButton("Export", callback_data=f"exportquiz:{quiz_id}")],
-        [InlineKeyboardButton("Share (post card)", callback_data=f"postcard:{quiz_id}")]
+        [InlineKeyboardButton("Delete 🚮", callback_data=f"deletequiz:{quiz_id}"), InlineKeyboardButton("Export♻️✅️", callback_data=f"exportquiz:{quiz_id}")],
+        [InlineKeyboardButton("Share (post card)↗️➡️↘️", callback_data=f"postcard:{quiz_id}")]
     ])
     await query.message.reply_text(txt, reply_markup=kb)
 
@@ -845,28 +849,33 @@ async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     quiz_id = args[1]
     await post_quiz_card(context.bot, update.effective_chat.id, quiz_id)
-
-async def post_quiz_card(bot, chat_id, quiz_id):
+    
+async def _generate_quiz_card_content(quiz_id: str) -> Tuple[str, InlineKeyboardMarkup, int, int] | Tuple[None, None, None, None]:
+    """
+    Fetches quiz data and generates the text and keyboard for a quiz card.
+    Returns (text, keyboard, question_count, time_per_question) or (None, None, None, None) if not found.
+    """
     qrow = db_execute("SELECT * FROM quizzes WHERE id = ?", (quiz_id,), commit=False).fetchone()
     if not qrow:
-        try:
-            await bot.send_message(chat_id, "Quiz not found.")
-        except:
-            pass
-        return
+        return None, None, None, None
+        
     qs_cur = db_execute("SELECT COUNT(*) as cnt FROM questions WHERE quiz_id = ?", (quiz_id,), commit=False)
     total_q = qs_cur.fetchone()["cnt"]
     title = qrow["title"] or f"Quiz {quiz_id}"
     time_per_q = qrow['time_per_question_sec'] or 30
     negative_marking = qrow['negative_mark']
+
+    # --- UPDATED FORMATTING LOGIC ---
     base_lines = [
-        f"💳 Quiz Name: `{title}`",
-        f"#️⃣ Questions: {total_q}",
-        f"⏰ Timer: {time_per_q} seconds",
-        f"🆔 Quiz ID: `{quiz_id}`",
-        f"🏴‍☠️ -ve Marking: {negative_marking}",
-        "💰 Type: free"
+        f'💳 Quiz Name: {title}',
+        f'#️⃣ Questions: {total_q}',
+        f'⏰ Timer: {time_per_q} seconds',
+        f'🆔 Quiz ID: `{quiz_id}`',
+        f'🏴‍☠️ -ve Marking: {negative_marking}',
+        '💰 Type: free'
     ]
+    
+    # Fetch and add creator information
     creator_mention_line = ""
     if qrow['creator_id']:
         creator_row = db_execute("SELECT * FROM creators WHERE id = ?", (qrow['creator_id'],), commit=False).fetchone()
@@ -875,15 +884,80 @@ async def post_quiz_card(bot, chat_id, quiz_id):
                 creator_mention_line = f"Created by: @{creator_row['username']}"
             elif creator_row['display_name']:
                  creator_mention_line = f"Created by: {creator_row['display_name']}"
+    
     if creator_mention_line:
         base_lines.append(creator_mention_line)
+
+    # Add the final call to action lines
     base_lines.append("\nTap start to play!")
+
+    # Join everything together
     text = "\n".join(base_lines)
+    # --- END OF UPDATED LOGIC ---
+    
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Start this quiz (in this chat)", callback_data=f"startgroup:{quiz_id}")],
-        [InlineKeyboardButton("Start in private", callback_data=f"startprivate:{quiz_id}")]
+        [InlineKeyboardButton("Start this quiz (in this chat) 🧑‍🧑‍🧒‍🧒", callback_data=f"startgroup:{quiz_id}")],
+        [InlineKeyboardButton("Start in private👤", callback_data=f"startprivate:{quiz_id}")]
     ])
-    await bot.send_message(chat_id, text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
+    
+    return text, kb, total_q, time_per_q
+
+    
+async def post_quiz_card(bot, chat_id, quiz_id):
+    text, kb, _, __ = await _generate_quiz_card_content(quiz_id)
+    if text and kb:
+        await bot.send_message(chat_id, text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
+    else:
+        try:
+            await bot.send_message(chat_id, "Quiz not found.")
+        except Exception:
+            pass
+
+# +++ ADD THIS ENTIRE NEW FUNCTION +++
+async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles the inline query."""
+    query = update.inline_query.query
+    
+    # Don't do anything if the query is empty
+    if not query:
+        return
+        
+    quiz_id = query.strip()
+    results = []
+
+    # Use our helper to get quiz details
+    text, kb, total_q, time_per_q = await _generate_quiz_card_content(quiz_id)
+
+    if text and kb:
+        # If the quiz is found, create a result article
+        results.append(
+            InlineQueryResultArticle(
+                id=quiz_id,
+                title=db_execute("SELECT title FROM quizzes WHERE id = ?", (quiz_id,), commit=False).fetchone()['title'],
+                description=f"{total_q} Questions | {time_per_q}s Timer | ID: {quiz_id}",
+                input_message_content=InputTextMessageContent(
+                    message_text=text,
+                    parse_mode=ParseMode.MARKDOWN,
+                ),
+                reply_markup=kb,
+            )
+        )
+    else:
+        # Optional: Show a "Not Found" message if the ID is invalid
+        results.append(
+            InlineQueryResultArticle(
+                id=str(uuid.uuid4()),
+                title="Quiz Not Found",
+                description=f"No quiz exists with the ID: {quiz_id}",
+                input_message_content=InputTextMessageContent(
+                    f"❌ Could not find a quiz with ID: `{quiz_id}`"
+                ),
+            )
+        )
+
+    await update.inline_query.answer(results, cache_time=5)
+
+
 
 async def start_private_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1694,6 +1768,7 @@ def main():
     app.add_handler(CommandHandler("backup", backup_handler))
     app.add_handler(CommandHandler("restore", restore_handler))
     app.add_handler(CommandHandler("schedule", schedule_command))
+    app.add_handler(InlineQueryHandler(inline_query_handler))
     
     # Message Handlers
     app.add_handler(MessageHandler(filters.Document.ALL, document_handler))
