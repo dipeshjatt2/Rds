@@ -177,7 +177,7 @@ async def generate_quiz_html(quiz_settings: dict, questions: list) -> str | None
             "/* QUIZ_DATA_PLACEHOLDER */",
             quiz_data_json
         )
-
+        final_html = final_html.replace("", quiz_settings.get("title", "Quiz Practice"))
         # 5. Save to a temporary file and return the path
         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".html", encoding="utf-8") as temp_f:
             temp_f.write(final_html)
@@ -1291,6 +1291,7 @@ async def finalize_attempt(bot, session_key, session_data):
         total_quiz_time_sec = len(session_data["questions"]) * session_data.get("time_per_question_sec", 30)
         
         quiz_settings = {
+            "title": quiz_row["title"],
             "totalTimeSec": total_quiz_time_sec,
             "negativeMark": negative
         }
@@ -1573,6 +1574,7 @@ async def group_finalize_and_export(bot, session_key):
         total_quiz_time_sec = len(session["questions"]) * session.get("time_per_question_sec", 30)
         
         quiz_settings = {
+            "title": session.get("title", f"Quiz {quiz_id}"),
             "totalTimeSec": total_quiz_time_sec,
             "negativeMark": session.get("negative", 0.0)
         }
