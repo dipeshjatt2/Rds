@@ -1,0 +1,931 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Interactive Practice Platform</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;700&display=swap" rel="stylesheet">
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://aistudiocdn.com/react@^19.1.1",
+    "react/": "https://aistudiocdn.com/react@^19.1.1/",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.1.1/",
+    "html-to-image": "https://esm.sh/html-to-image"
+  }
+}
+</script>
+<style>
+/* General Reset & Theming */
+:root {
+  --primary-color: #007bff; /* Vibrant Blue for light mode */
+  --secondary-color: #6c757d;
+  --success-color: #20c997;
+  --danger-color: #fd5c63;
+  --finish-color: #ffc107;
+  --bookmark-color: #fd7e14;
+
+  --text-color: #212529;
+  --text-color-light: #f8f9fa;
+
+  /* Glassmorphism Variables */
+  --glass-bg-light: rgba(255, 255, 255, 0.25);
+  --glass-border-light: rgba(255, 255, 255, 0.3);
+  --glass-bg-dark: rgba(13, 37, 63, 0.45); /* Dark Blue Glass */
+  --glass-border-dark: rgba(255, 255, 255, 0.15);
+
+  --font-sans-serif: 'Poppins', sans-serif;
+}
+
+[data-theme="dark"] {
+  --primary-color: #4dabf7; /* Lighter, accessible blue for dark mode */
+  --success-color: #20c997;
+  --danger-color: #ff6b6b;
+  --bookmark-color: #ff9f0a;
+
+  --text-color: #e9ecef;
+  --text-color-light: #212529;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans-serif);
+  color: var(--text-color);
+  line-height: 1.6;
+  font-weight: 300;
+}
+
+#root {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  padding: 15px;
+  box-sizing: border-box;
+}
+
+.app-wrapper {
+  width: 100vw;
+  height: 100vh;
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: -1;
+  background: linear-gradient(135deg, #e0eafc, #cfdef3); /* Light blue gradient */
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+  transition: background 0.3s ease-in-out;
+}
+
+[data-theme="dark"] .app-wrapper {
+   background: linear-gradient(135deg, #0f2027, #203a43, #2c5364); /* Dark blue gradient */
+}
+
+
+/* Glass Panel Style */
+.glass-panel {
+  background: var(--glass-bg-light);
+  backdrop-filter: blur(15px);
+  -webkit-backdrop-filter: blur(15px);
+  border-radius: 20px;
+  border: 1px solid var(--glass-border-light);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.1);
+  transition: background 0.3s, border 0.3s;
+}
+
+[data-theme="dark"] .glass-panel {
+  background: var(--glass-bg-dark);
+  border: 1px solid var(--glass-border-dark);
+}
+
+/* Home Screen & Scorecard */
+.home-container, .scorecard-container {
+  width: 100%;
+  max-width: 700px;
+  padding: 30px 40px;
+  text-align: center;
+  animation: fadeIn 0.5s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.home-container h1, .scorecard-container h2 {
+  color: var(--text-color);
+  margin-bottom: 10px;
+  font-weight: 500;
+}
+
+.home-actions, .scorecard-actions {
+  display: flex;
+  justify-content: center;
+  gap: 15px;
+  margin-top: 25px;
+  flex-wrap: wrap;
+}
+
+.score-display {
+  display: flex;
+  justify-content: space-around;
+  margin-top: 30px;
+  padding: 15px;
+  border-radius: 12px;
+  background: rgba(0,0,0,0.05);
+}
+.score-item {
+  display: flex;
+  flex-direction: column;
+}
+.score-value {
+  font-size: 2.5em;
+  font-weight: 700;
+}
+.score-label {
+  font-size: 0.9em;
+  color: var(--text-color);
+  opacity: 0.7;
+}
+.score-item.accuracy .score-value { color: var(--primary-color); }
+.score-item.correct .score-value { color: var(--success-color); }
+.score-item.incorrect .score-value { color: var(--danger-color); }
+
+/* Main Test Container */
+.test-container {
+  width: 100%;
+  max-width: 1100px;
+  overflow: hidden;
+}
+
+.test-header {
+  background: transparent;
+  color: var(--text-color);
+  padding: 15px 25px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--glass-border-light);
+}
+[data-theme="dark"] .test-header {
+  border-bottom: 1px solid var(--glass-border-dark);
+}
+
+.test-header h1 {
+  margin: 0;
+  font-size: 1.3em;
+  font-weight: 500;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.icon-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-color);
+  font-size: 1.3rem;
+  cursor: pointer;
+  padding: 5px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s;
+}
+.icon-btn:hover {
+  background-color: rgba(0,0,0,0.1);
+}
+
+.palette-toggle-btn {
+  display: none;
+  background: none;
+  border: 1px solid var(--text-color);
+  opacity: 0.7;
+  color: var(--text-color);
+  font-size: 1.5rem;
+  line-height: 1;
+  padding: 0px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.test-body { display: flex; flex-wrap: wrap; }
+
+/* Question Panel */
+.question-panel {
+  flex: 3;
+  padding: 20px;
+  border-right: 1px solid var(--glass-border-light);
+  min-width: 300px;
+  user-select: none;
+}
+[data-theme="dark"] .question-panel {
+  border-right: 1px solid var(--glass-border-dark);
+}
+.question-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 0 0 15px 0;
+}
+.question-header h3 {
+  margin: 0;
+  font-size: 1.1em;
+  color: var(--primary-color);
+  font-weight: 500;
+}
+.question-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.bookmark-btn {
+  color: var(--text-color);
+  opacity: 0.6;
+  padding: 0;
+}
+.bookmark-btn svg {
+  width: 20px;
+  height: 20px;
+}
+.bookmark-btn.active {
+  color: var(--bookmark-color);
+  opacity: 1;
+}
+
+.share-btn {
+    background: rgba(0,0,0,0.05);
+    border: 1px solid transparent;
+    color: var(--text-color);
+    border-radius: 20px;
+    padding: 4px 12px;
+    font-size: 0.8em;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: background-color 0.2s;
+}
+.share-btn:hover { background: rgba(0,0,0,0.1); }
+.share-btn:disabled { cursor: not-allowed; opacity: 0.7; }
+
+.spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(128,128,128,0.3);
+    border-radius: 50%;
+    border-top-color: var(--primary-color);
+    animation: spin 1s ease-in-out infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.question-text {
+  font-size: 1.1em;
+  min-height: 50px;
+  margin-bottom: 20px;
+  font-weight: 400;
+}
+
+.options-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
+.option-label {
+  display: flex;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 0.95em;
+}
+.option-label:not(.disabled):hover { border-color: var(--primary-color); background-color: rgba(0, 123, 255, 0.1); }
+.option-label.correct { border-color: var(--success-color); background-color: rgba(32, 201, 151, 0.2); color: var(--success-color); font-weight: 500; }
+.option-label.incorrect { border-color: var(--danger-color); background-color: rgba(253, 92, 99, 0.2); color: var(--danger-color); font-weight: 500; }
+.option-label.disabled { cursor: not-allowed; opacity: 0.9; }
+.option-radio { margin-right: 12px; width: 16px; height: 16px; accent-color: var(--primary-color); }
+.option-radio:disabled { accent-color: var(--secondary-color); }
+
+.explanation-box {
+    margin-top: 20px;
+    padding: 12px;
+    background: rgba(0, 123, 255, 0.1);
+    border-left: 3px solid var(--primary-color);
+    border-radius: 4px;
+}
+.explanation-box h5 { margin: 0 0 8px 0; color: var(--primary-color); font-size: 0.9em; font-weight: 500; }
+.explanation-box p { margin: 0; font-size: 0.9em; }
+
+.action-btn { padding: 8px 18px; border: 1px solid transparent; border-radius: 8px; cursor: pointer; font-size: 0.9em; font-weight: 400; transition: all 0.2s; flex-grow: 1; background: rgba(0,0,0,0.05); color: var(--text-color); }
+.action-btn:disabled { cursor: not-allowed; opacity: 0.5; }
+.action-btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+.primary-btn { background-color: var(--primary-color); color: white; }
+.secondary-btn { background-color: rgba(0,0,0,0.2); color: var(--text-color-light); }
+[data-theme="dark"] .secondary-btn { background-color: rgba(255,255,255,0.2); color: var(--text-color); }
+
+/* Palette Panel */
+.palette-panel { flex: 1; padding: 20px; min-width: 260px; }
+.palette-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+.palette-header h4 { margin: 0; font-weight: 500; }
+.close-palette-btn { display: none; background: none; border: none; font-size: 2rem; font-weight: 400; line-height: 1; padding: 0; cursor: pointer; color: var(--text-color); opacity: 0.7; }
+
+.palette-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(40px, 1fr)); gap: 8px; }
+
+.palette-item-wrapper { position: relative; }
+.palette-btn { width: 40px; height: 40px; border-radius: 50%; border: 1px solid transparent; cursor: pointer; font-weight: 500; font-size: 0.9em; display: flex; justify-content: center; align-items: center; transition: all 0.2s ease; }
+.palette-btn.current { border-color: var(--primary-color); box-shadow: 0 0 8px var(--primary-color); }
+.bookmark-indicator { position: absolute; top: 0; right: 0; width: 10px; height: 10px; background-color: var(--bookmark-color); border-radius: 50%; border: 2px solid var(--glass-bg-light); }
+[data-theme="dark"] .bookmark-indicator { border: 2px solid var(--glass-bg-dark); }
+
+.status-correct { background-color: var(--success-color); color: white; }
+.status-incorrect { background-color: var(--danger-color); color: white; }
+.status-not-answered { background-color: transparent; color: var(--text-color); border: 1px solid var(--text-color); opacity: 0.8; }
+.status-not-visited { background-color: rgba(0,0,0,0.1); color: var(--text-color); opacity: 0.6; }
+
+.legend { margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--glass-border-light); }
+[data-theme="dark"] .legend { border-top: 1px solid var(--glass-border-dark); }
+.legend h5 { margin: 0 0 10px 0; font-weight: 500; font-size: 0.9em; }
+.legend-item { display: flex; align-items: center; margin-bottom: 6px; font-size: 0.85em; }
+.legend-color { width: 12px; height: 12px; border-radius: 3px; margin-right: 8px; border: 1px solid rgba(128,128,128,0.3); }
+.legend-color.status-correct { background-color: var(--success-color); }
+.legend-color.status-incorrect { background-color: var(--danger-color); }
+.legend-color.status-not-answered { border: 1px solid var(--text-color); }
+.legend-color.status-not-visited { background-color: rgba(0,0,0,0.1); }
+.legend-bookmark { background-color: var(--bookmark-color); border-radius: 50%; }
+
+.overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.3); z-index: 1000; opacity: 0; visibility: hidden; transition: opacity 0.3s ease-in-out, visibility 0.3s; backdrop-filter: blur(5px); }
+.test-container.palette-open .overlay { opacity: 1; visibility: visible; }
+
+/* Responsive Design */
+@media (max-width: 900px) {
+  .palette-toggle-btn, .close-palette-btn { display: block; }
+  .test-body { display: block; }
+  .question-panel { border-right: none; }
+  .palette-panel { position: fixed; top: 0; right: 0; height: 100%; width: 280px; max-width: 85vw; transform: translateX(100%); transition: transform 0.3s ease-in-out; z-index: 1001; box-shadow: -5px 0 15px rgba(0,0,0,0.1); overflow-y: auto; min-width: unset; }
+  .palette-panel.glass-panel {
+     border-radius: 20px 0 0 20px;
+     border-right: none;
+  }
+  .test-container.palette-open .palette-panel { transform: translateX(0); }
+}
+
+@media (max-width: 600px) {
+  #root { padding: 0; }
+  .test-container.glass-panel, .home-container.glass-panel, .scorecard-container.glass-panel { border-radius: 0; min-height: 100vh; }
+  .home-actions, .scorecard-actions { flex-direction: column; gap: 10px; }
+  .action-btn { width: 100%; box-sizing: border-box; }
+  .score-display { flex-direction: column; gap: 15px; }
+  .home-container, .scorecard-container { padding: 20px; }
+}
+</style>
+<link rel="stylesheet" href="/index.css">
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module">
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import ReactDOM from 'react-dom/client';
+import * as htmlToImage from 'html-to-image';
+
+const initialQuizQuestions = // QUIZ_DATA_PLACEHOLDER
+
+
+// Constants for question statuses
+const STATUS = {
+  NOT_VISITED: 'not-visited',
+  NOT_ANSWERED: 'not-answered',
+  CORRECT: 'correct',
+  INCORRECT: 'incorrect',
+};
+
+const App = () => {
+  const [gameState, setGameState] = useState('home'); // 'home', 'quiz', 'scorecard'
+  const [quizData, setQuizData] = useState(initialQuizQuestions);
+  const [originalQuestions, setOriginalQuestions] = useState(initialQuizQuestions);
+
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [answers, setAnswers] = useState([]);
+  const [statuses, setStatuses] = useState([]);
+  const [bookmarks, setBookmarks] = useState([]);
+
+  const [isPaletteOpen, setIsPaletteOpen] = useState(false);
+  const [touchStartX, setTouchStartX] = useState(null);
+  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+  const [isFinishing, setIsFinishing] = useState(false);
+
+  const [theme, setTheme] = useState('light');
+  const [wallpaper, setWallpaper] = useState(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const wallpaperInputRef = useRef(null);
+  const customQuizInputRef = useRef(null);
+  const [score, setScore] = useState({ correct: 0, incorrect: 0, accuracy: 0 });
+
+  const handleFinish = useCallback(() => {
+      if (gameState !== 'quiz') return;
+      let correct = 0;
+      answers.forEach((ans, i) => {
+          if (ans === quizData[i].correct_answer_index) {
+              correct++;
+          }
+      });
+      const incorrect = quizData.length - correct;
+      const accuracy = quizData.length > 0 ? (correct / quizData.length) * 100 : 0;
+      setScore({ correct, incorrect, accuracy: parseFloat(accuracy.toFixed(2)) });
+      setGameState('scorecard');
+  }, [answers, quizData, gameState]);
+
+  const initializeQuiz = useCallback((questions) => {
+    setQuizData(questions);
+    const numQuestions = questions.length;
+    setAnswers(new Array(numQuestions).fill(null));
+    const initialStatuses = new Array(numQuestions).fill(STATUS.NOT_VISITED);
+    if (numQuestions > 0) {
+      initialStatuses[0] = STATUS.NOT_ANSWERED;
+    }
+    setStatuses(initialStatuses);
+    setBookmarks(new Array(numQuestions).fill(false));
+    setCurrentIndex(0);
+    setIsFinishing(false);
+    setGameState('quiz');
+  }, []);
+
+  // FIX: Automatically initialize the quiz when the component loads.
+  // This bypasses the home screen and directly shows the first question.
+  useEffect(() => {
+    initializeQuiz(initialQuizQuestions);
+  }, [initializeQuiz]);
+
+  useEffect(() => {
+    if (gameState !== 'quiz' || isFinishing || quizData.length === 0) return;
+
+    const allAnswered = answers.every(ans => ans !== null);
+
+    if (allAnswered) {
+        setIsFinishing(true);
+        setTimeout(handleFinish, 1200);
+    }
+  }, [answers, gameState, isFinishing, handleFinish, quizData.length]);
+
+
+  const updateStatus = useCallback((index, newStatus) => {
+    setStatuses(prev => {
+      const newStatuses = [...prev];
+      newStatuses[index] = newStatus;
+      return newStatuses;
+    });
+  }, []);
+
+  const handleOptionSelect = (selectedIndex) => {
+    if (answers[currentIndex] !== null) return;
+
+    const newAnswers = [...answers];
+    newAnswers[currentIndex] = selectedIndex;
+    setAnswers(newAnswers);
+
+    const isCorrect = selectedIndex === quizData[currentIndex].correct_answer_index;
+    updateStatus(currentIndex, isCorrect ? STATUS.CORRECT : STATUS.INCORRECT);
+  };
+
+  const handleNext = useCallback(() => {
+    if (currentIndex < quizData.length - 1) {
+      const nextIndex = currentIndex + 1;
+      if (statuses[nextIndex] === STATUS.NOT_VISITED) {
+        updateStatus(nextIndex, STATUS.NOT_ANSWERED);
+      }
+      setCurrentIndex(nextIndex);
+    }
+  }, [currentIndex, quizData.length, statuses, updateStatus]);
+
+  const handlePrevious = useCallback(() => {
+    if (currentIndex > 0) {
+      setCurrentIndex(currentIndex - 1);
+    }
+  }, [currentIndex]);
+
+  const handleBookmark = () => {
+    setBookmarks(prev => {
+        const newBookmarks = [...prev];
+        newBookmarks[currentIndex] = !newBookmarks[currentIndex];
+        return newBookmarks;
+    })
+  };
+
+  const handleQuestionPaletteClick = (index) => {
+    if (statuses[index] === STATUS.NOT_VISITED) {
+      updateStatus(index, STATUS.NOT_ANSWERED);
+    }
+    setCurrentIndex(index);
+    setIsPaletteOpen(false);
+  };
+
+  const handleShareQuestion = async () => {
+    if (!navigator.share) {
+        alert('Sharing is not supported on your browser.');
+        return;
+    }
+
+    setIsGeneratingImage(true);
+    try {
+        const node = document.createElement('div');
+        node.style.width = '450px';
+        node.style.padding = '25px';
+        node.style.fontFamily = 'Poppins, sans-serif';
+        node.style.color = theme === 'dark' ? '#e9ecef' : '#212529';
+
+        const qHeader = document.createElement('h3');
+        qHeader.textContent = `Question ${currentIndex + 1}`;
+        qHeader.style.color = theme === 'dark' ? '#4dabf7' : '#007bff';
+        qHeader.style.marginBottom = '15px';
+        node.appendChild(qHeader);
+
+        const qText = document.createElement('p');
+        qText.innerText = quizData[currentIndex].question;
+        qText.style.fontSize = '1.1em';
+        qText.style.marginBottom = '20px';
+        qText.style.whiteSpace = 'pre-wrap';
+        node.appendChild(qText);
+
+        const qOptions = document.createElement('div');
+        quizData[currentIndex].options.forEach((option, index) => {
+            const opt = document.createElement('div');
+            opt.textContent = `${String.fromCharCode(65 + index)}. ${option}`;
+            opt.style.padding = '10px';
+            opt.style.border = `1px solid ${theme === 'dark' ? '#444' : '#ddd'}`;
+            opt.style.borderRadius = '8px';
+            opt.style.marginBottom = '8px';
+            qOptions.appendChild(opt);
+        });
+        node.appendChild(qOptions);
+
+        const footer = document.createElement('p');
+        footer.textContent = 'Shared from Interactive Practice Platform';
+        footer.style.fontSize = '0.8em';
+        footer.style.opacity = '0.7';
+        footer.style.marginTop = '20px';
+        footer.style.textAlign = 'center';
+        node.appendChild(footer);
+
+        node.style.position = 'absolute';
+        node.style.top = '-9999px';
+        node.style.left = '-9999px';
+        document.body.appendChild(node);
+
+        await new Promise(resolve => setTimeout(resolve, 50));
+
+        const dataUrl = await htmlToImage.toPng(node, {
+            quality: 0.95,
+            pixelRatio: 2,
+            backgroundColor: theme === 'dark' ? '#1a1a1a' : '#ffffff'
+        });
+
+        document.body.removeChild(node);
+
+        const blob = await (await fetch(dataUrl)).blob();
+        const file = new File([blob], `question_${currentIndex + 1}.png`, { type: 'image/png' });
+
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            await navigator.share({
+                title: `Question ${currentIndex + 1}`,
+                text: `Can you explain this question?`,
+                files: [file],
+            });
+        } else {
+             throw new Error("Cannot share images on this browser.");
+        }
+    } catch (error) {
+        console.error('Error sharing question:', error);
+        alert('Could not share the question image. Your browser might not support sharing images.');
+    } finally {
+        setIsGeneratingImage(false);
+    }
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (gameState !== 'quiz') return;
+      if (e.key === 'ArrowRight') handleNext();
+      else if (e.key === 'ArrowLeft') handlePrevious();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [gameState, handleNext, handlePrevious]);
+
+  const handleTouchStart = (e) => {
+      if (isPaletteOpen) return;
+      setTouchStartX(e.touches[0].clientX);
+  };
+  const handleTouchEnd = (e) => {
+    if (touchStartX === null || isPaletteOpen) return;
+    const touchEndX = e.changedTouches[0].clientX;
+    const swipeThreshold = 50;
+    if (touchStartX - touchEndX > swipeThreshold) handleNext();
+    else if (touchEndX - touchStartX > swipeThreshold) handlePrevious();
+    setTouchStartX(null);
+  };
+
+  const handleReattendWrong = () => {
+      const wrongQuestions = quizData.filter((_, i) => answers[i] !== quizData[i].correct_answer_index);
+      if(wrongQuestions.length > 0) {
+          initializeQuiz(wrongQuestions);
+      }
+  };
+
+  const parseQuizFile = (content) => {
+    try {
+        const questions = [];
+        let quizContent = content;
+
+        const headerEndMarker = '----------------------------------------';
+        const footerStartMarker = 'Join for more quizes';
+
+        const headerIndex = quizContent.indexOf(headerEndMarker);
+        if (headerIndex !== -1) {
+            quizContent = quizContent.substring(headerIndex + headerEndMarker.length);
+        }
+
+        const footerIndex = quizContent.indexOf(footerStartMarker);
+        if (footerIndex !== -1) {
+            quizContent = quizContent.substring(0, footerIndex);
+        }
+
+        quizContent = quizContent.trim();
+
+        const questionBlocks = quizContent.split(/\n(?=\d+\.\s)/);
+
+        if (questionBlocks.length === 1 && questionBlocks[0] === '') {
+          throw new Error("No questions found after header.");
+        }
+
+        for (const block of questionBlocks) {
+            if (!block.trim()) continue;
+
+            const lines = block.trim().split('\n');
+            let questionText = '';
+            const options = [];
+            let correctAnswerIndex = -1;
+
+            const firstLine = lines.shift().replace(/^\d+\.\s*/, '').trim();
+            questionText = firstLine;
+            let inOptions = false;
+
+            for (const line of lines) {
+                const trimmedLine = line.trim();
+                const optionMatch = trimmedLine.match(/^([A-Z])\)\s/);
+
+                if (optionMatch) {
+                    inOptions = true;
+                    let optionText = trimmedLine.substring(optionMatch[0].length).trim();
+
+                    if (optionText.endsWith('✅')) {
+                        correctAnswerIndex = options.length;
+                        optionText = optionText.replace('✅', '').trim();
+                    }
+                    options.push(optionText);
+                } else if (!inOptions) {
+                    questionText += '\n' + trimmedLine;
+                }
+            }
+
+            if (questionText && options.length > 0 && correctAnswerIndex !== -1) {
+                questions.push({
+                    question: questionText.trim(),
+                    options: options,
+                    correct_answer_index: correctAnswerIndex,
+                    explanation: "Explanation will be available after attempting."
+                });
+            } else {
+                 console.warn("Skipping invalid block:", block);
+            }
+        }
+
+        if (questions.length === 0) {
+            throw new Error("Could not parse any questions. Check the format.");
+        }
+
+        return questions;
+    } catch (e) {
+        console.error("Failed to parse quiz file:", e);
+        alert(`Error parsing file. Please check the format.\n\nExpected format:\n- A header ending with '----------------------------------------'\n- Questions starting with '1.', '2.', etc.\n- Options starting with 'A)', 'B)', etc.\n- Correct answer marked with '✅' at the end.`);
+        return null;
+    }
+  };
+
+  const handleCustomQuizUpload = (event) => {
+      const file = event.target.files[0];
+      if (file) {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+              const questions = parseQuizFile(e.target.result);
+              if (questions && questions.length > 0) {
+                  setOriginalQuestions(questions);
+                  initializeQuiz(questions);
+              }
+          };
+          reader.readAsText(file);
+      }
+      event.target.value = ''; // Reset file input
+  };
+
+  useEffect(() => {
+      document.body.dataset.theme = theme;
+  }, [theme]);
+
+  const handleWallpaperChange = (event) => {
+    const file = event.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setWallpaper(e.target.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleFullScreenToggle = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(err => {
+        alert(`Error attempting to enable full-screen mode: ${err.message} (${err.name})`);
+      });
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
+      }
+    }
+  };
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
+  }, []);
+
+  if (gameState === 'home') {
+    return (
+        React.createElement('div', { className: "home-container glass-panel" },
+            React.createElement('h1', null, "Interactive Practice Platform"),
+            React.createElement('p', null, "Choose a quiz to start or upload your own."),
+            React.createElement('div', { className: "home-actions" },
+                React.createElement('button', { className: "action-btn primary-btn", onClick: () => initializeQuiz(originalQuestions) }, "Start Default Quiz"),
+                React.createElement('button', { className: "action-btn secondary-btn", onClick: () => customQuizInputRef.current.click() },
+                    "+ Upload Quiz (.txt)"
+                ),
+                React.createElement('input', { type: "file", ref: customQuizInputRef, onChange: handleCustomQuizUpload, accept: ".txt", style: { display: 'none' } })
+            )
+        )
+    );
+  }
+
+  if (gameState === 'scorecard') {
+      return (
+          React.createElement('div', { className: "scorecard-container glass-panel" },
+              React.createElement('h2', null, "Practice Complete!"),
+              React.createElement('div', { className: "score-display" },
+                  React.createElement('div', { className: "score-item accuracy" },
+                      React.createElement('span', { className: "score-value" }, `${score.accuracy}%`),
+                      React.createElement('span', { className: "score-label" }, "Accuracy")
+                  ),
+                  React.createElement('div', { className: "score-item correct" },
+                      React.createElement('span', { className: "score-value" }, score.correct),
+                      React.createElement('span', { className: "score-label" }, "Correct")
+                  ),
+                  React.createElement('div', { className: "score-item incorrect" },
+                      React.createElement('span', { className: "score-value" }, score.incorrect),
+                      React.createElement('span', { className: "score-label" }, "Wrong")
+                  )
+              ),
+              React.createElement('div', { className: "scorecard-actions" },
+                  score.incorrect > 0 && (
+                      React.createElement('button', { className: "action-btn primary-btn", onClick: handleReattendWrong }, "Re-attend Wrong")
+                  ),
+                   React.createElement('button', { className: "action-btn secondary-btn", onClick: () => initializeQuiz(originalQuestions) }, "Practice Again"),
+                  React.createElement('button', { className: "action-btn", onClick: () => setGameState('home') }, "Back to Home")
+              )
+          )
+      );
+  }
+
+  const currentQuestion = quizData[currentIndex];
+  if (!currentQuestion) {
+      // This might show briefly on load, or if no questions are generated.
+      return React.createElement('div', { className: "home-container glass-panel" },
+        React.createElement('h1', null, "Loading Quiz..."),
+        React.createElement('p', null, "Please wait a moment.")
+      );
+  }
+
+
+  return (
+    React.createElement(React.Fragment, null,
+      React.createElement('div', { className: "app-wrapper", style: {backgroundImage: wallpaper ? `url(${wallpaper})` : undefined} }),
+      React.createElement('div', { className: `test-container glass-panel ${isPaletteOpen ? 'palette-open' : ''}`, role: "main", onTouchStart: handleTouchStart, onTouchEnd: handleTouchEnd },
+        isPaletteOpen && React.createElement('div', { className: "overlay", onClick: () => setIsPaletteOpen(false) }),
+        React.createElement('header', { className: "test-header" },
+          React.createElement('div', { className: "header-left" },
+            React.createElement('h1', null, "Practice Mode")
+          ),
+          React.createElement('div', { className: "header-right" },
+              React.createElement('button', { onClick: handleFullScreenToggle, className: "icon-btn", "aria-label": "Toggle Fullscreen" },
+                isFullscreen ? '↙️' : '↗️'
+              ),
+              React.createElement('button', { onClick: () => wallpaperInputRef.current.click(), className: "icon-btn", "aria-label": "Upload Wallpaper" }, "🖼️"),
+              React.createElement('input', { type: "file", ref: wallpaperInputRef, onChange: handleWallpaperChange, accept: "image/*", style: { display: 'none' } }),
+              React.createElement('button', { onClick: () => setTheme(t => t === 'light' ? 'dark' : 'light'), className: "icon-btn", "aria-label": "Toggle Theme" },
+                theme === 'light' ? '🌙' : '☀️'
+              ),
+              React.createElement('button', { className: "palette-toggle-btn", onClick: () => setIsPaletteOpen(true), "aria-label": "Open question palette" }, "☰")
+          )
+        ),
+        React.createElement('div', { className: "test-body" },
+          React.createElement('main', { className: "question-panel" },
+            React.createElement('div', { className: "question-header" },
+              React.createElement('h3', null, `Question ${currentIndex + 1}`),
+              React.createElement('div', { className: "question-header-actions" },
+                 React.createElement('button', { className: `icon-btn bookmark-btn ${bookmarks[currentIndex] ? 'active' : ''}`, onClick: handleBookmark, "aria-label": "Bookmark Question" },
+                    React.createElement('svg', { xmlns: "http://www.w3.org/2000/svg", viewBox: "0 0 24 24", fill: "currentColor" }, React.createElement('path', { d: "M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z" }))
+                 ),
+                 React.createElement('button', { className: "share-btn", onClick: handleShareQuestion, disabled: isGeneratingImage },
+                    isGeneratingImage && React.createElement('div', { className: "spinner" }),
+                    "Share with AI"
+                 )
+              )
+            ),
+            React.createElement('p', { className: "question-text" }, currentQuestion.question),
+            React.createElement('div', { className: "options-list", role: "radiogroup" },
+              currentQuestion.options.map((option, index) => {
+                 const isSelected = answers[currentIndex] === index;
+                 const isCorrect = currentQuestion.correct_answer_index === index;
+                 let optionClass = '';
+                 const isAnswered = answers[currentIndex] !== null;
+
+                 if (isAnswered) {
+                   if(isCorrect) optionClass = 'correct';
+                   else if(isSelected) optionClass = 'incorrect';
+                 }
+
+                return(
+                  React.createElement('label', { key: index, className: `option-label ${optionClass} ${isAnswered ? 'disabled' : ''}` },
+                    React.createElement('input', { type: "radio", name: `question-${currentIndex}`, value: index, checked: isSelected, onChange: () => handleOptionSelect(index), className: "option-radio", disabled: isAnswered }),
+                    option
+                  )
+                )})
+            ),
+            (answers[currentIndex] !== null) && (
+              React.createElement('div', { className: "explanation-box" },
+                  React.createElement('h5', null, "Explanation"),
+                  React.createElement('p', null, currentQuestion.explanation)
+              )
+            )
+          ),
+          React.createElement('aside', { className: "palette-panel glass-panel" },
+            React.createElement('div', { className: "palette-header" },
+               React.createElement('h4', null, "Question Palette"),
+               React.createElement('button', { className: "close-palette-btn", onClick: () => setIsPaletteOpen(false), "aria-label": "Close question palette" }, "×")
+            ),
+            React.createElement('div', { className: "palette-grid" },
+              statuses.map((status, index) => (
+                React.createElement('div', { key: index, className: "palette-item-wrapper" },
+                    React.createElement('button', {
+                        className: `palette-btn status-${status} ${currentIndex === index ? 'current' : ''}`,
+                        onClick: () => handleQuestionPaletteClick(index),
+                        "aria-label": `Go to question ${index + 1}`
+                    },
+                        index + 1
+                    ),
+                    bookmarks[index] && React.createElement('div', { className: "bookmark-indicator" })
+                )
+              ))
+            ),
+            React.createElement('div', { className: "legend" },
+               React.createElement('h5', null, "Legend"),
+               React.createElement('div', { className: "legend-item" }, React.createElement('span', { className: "legend-color status-correct" }), " Correct"),
+               React.createElement('div', { className: "legend-item" }, React.createElement('span', { className: "legend-color status-incorrect" }), " Incorrect"),
+               React.createElement('div', { className: "legend-item" }, React.createElement('span', { className: "legend-color status-not-answered" }), " Not Attempted"),
+               React.createElement('div', { className: "legend-item" }, React.createElement('span', { className: "legend-color status-not-visited" }), " Not Visited"),
+               React.createElement('div', { className: "legend-item" }, React.createElement('div', { className: "bookmark-indicator legend-bookmark" }), " Bookmarked")
+            )
+          )
+        )
+      )
+    )
+  );
+};
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(
+  React.createElement(React.StrictMode, null,
+    React.createElement(App, null)
+  )
+);
+  </script>
+<script type="module" src="/index.tsx"></script>
+</body>
+</html>
