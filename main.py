@@ -158,6 +158,132 @@ async def shufftxt_handler(client, message: Message):
         await message.reply_text(f"❌ An error occurred while processing the file: {e}")
 
 #dg
+# ── Parmar SSC Scraper (/parmar) ──
+
+@app.on_message(filters.command("parmar"))
+async def parmar_handler(client, message: Message):
+    """
+    Fetches quiz data from the Parmar SSC API based on a test ID.
+    Usage: /parmar [test_id]
+    Example: /parmar 163
+    """
+    # --- 1. Validate Input ---
+    try:
+        command_parts = message.text.split(None, 1)
+        if len(command_parts) < 2:
+            await message.reply_text(
+                "❌ **Usage:** `/parmar [test_id]`\n\n"
+                "**Example:** `/parmar 163`"
+            )
+            return
+        
+        test_id = command_parts[1].strip()
+        if not test_id.isdigit():
+            await message.reply_text("❌ **Invalid ID:** The Test ID must be a number.")
+            return
+    except Exception as e:
+        await message.reply_text(f"⚠️ Error parsing command: {e}")
+        return
+
+    status_msg = await message.reply_text(f"🔍 Fetching data for Test ID: `{test_id}`...")
+
+    # --- 2. Prepare and Send API Request ---
+    API_URL = f"https://supabase.admin.parmarssc.in/rest/v1/questions?select=*&test_id=eq.{test_id}&order=question_id.asc"
+    
+    # Headers copied directly from your cURL example
+    HEADERS = {
+        'accept': '*/*',
+        'accept-language': 'en-IN',
+        'accept-profile': 'public',
+        'apikey': 'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsImlhdCI6MTc1NjEzNTc0MCwiZXhwIjo0OTExODA5MzQwLCJyb2xlIjoiYW5vbiJ9.YAwJyVj6lIOEdPDmSrbqbzH6t_NwTtGcEPi-35qBdBk',
+        'authorization': 'Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJzdXBhYmFzZSIsImlhdCI6MTc1NjEzNTc0MCwiZXhwIjo0OTExODA5MzQwLCJyb2xlIjoiYW5vbiJ9.YAwJyVj6lIOEdPDmSrbqbzH6t_NwTtGcEPi-35qBdBk',
+        'origin': 'https://revision.admin.parmarssc.in',
+        'priority': 'u=1, i',
+        'referer': 'https://revision.admin.parmarssc.in/',
+        'sec-ch-ua': '"Chromium";v="127", "Not)A;Brand";v="99", "Microsoft Edge Simulate";v="127", "Lemur";v="127"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Android"',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'same-site',
+        'user-agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
+        'x-client-info': 'supabase-js-web/2.50.0'
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(API_URL, headers=HEADERS, timeout=30) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    await status_msg.edit(f"❌ **API Error: {resp.status}**\n\nCould not fetch data. The server responded with:\n`{error_text[:300]}`")
+                    return
+                
+                questions_data = await resp.json()
+
+    except asyncio.TimeoutError:
+         await status_msg.edit("❌ **Request Timed Out:** The API server took too long to respond.")
+         return
+    except Exception as e:
+        await status_msg.edit(f"❌ **An unexpected error occurred:**\n`{str(e)}`")
+        return
+
+    if not questions_data:
+        await status_msg.edit(f"🤷 **No questions found** for Test ID `{test_id}`. Please check the ID and try again.")
+        return
+
+    await status_msg.edit(f"✅ Found {len(questions_data)} questions. Formatting files...")
+
+    # --- 3. Process Data and Format Text Files ---
+    en_lines = []
+    hi_lines = []
+    option_keys = ['A', 'B', 'C', 'D'] # The API uses 'A', 'B', etc. for correct option
+
+    for i, q in enumerate(questions_data, start=1):
+        # -- English Version --
+        en_lines.append(f"{i}. {q.get('question_text_en', '').strip()}")
+        for key in option_keys:
+            option_text = q.get(f'option_{key.lower()}_en', '').strip()
+            if option_text: # Only add option if it exists
+                checkmark = " ✅" if q.get('correct_option') == key else ""
+                en_lines.append(f"({key.lower()}) {option_text}{checkmark}")
+        en_lines.append("") # Blank line between questions
+
+        # -- Hindi Version --
+        hi_lines.append(f"{i}. {q.get('question_text_hi', '').strip()}")
+        for key in option_keys:
+            option_text = q.get(f'option_{key.lower()}_hi', '').strip()
+            if option_text:
+                checkmark = " ✅" if q.get('correct_option') == key else ""
+                hi_lines.append(f"({key.lower()}) {option_text}{checkmark}")
+        hi_lines.append("")
+
+    # --- 4. Create and Send Files ---
+    try:
+        # English file
+        en_text = "\n".join(en_lines).strip()
+        en_file = io.BytesIO(en_text.encode("utf-8-sig")) # Use utf-8-sig as requested
+        en_file.name = f"{test_id}_en.txt"
+
+        # Hindi file
+        hi_text = "\n".join(hi_lines).strip()
+        hi_file = io.BytesIO(hi_text.encode("utf-8-sig"))
+        hi_file.name = f"{test_id}_hi.txt"
+        
+        # Send English file
+        await message.reply_document(
+            document=en_file,
+            caption=f"English questions for Test ID: `{test_id}`"
+        )
+        # Send Hindi file
+        await message.reply_document(
+            document=hi_file,
+            caption=f"Hindi questions for Test ID: `{test_id}`"
+        )
+        await status_msg.delete()
+
+    except Exception as e:
+        await status_msg.edit(f"❌ **Error creating file:**\n`{str(e)}`")
+
  # <-- Make sure this import is at the top of your script with the others!
 @app.on_message(filters.command("ping"))
 async def ping_handler(client, message: Message):
@@ -2097,7 +2223,7 @@ async def download_file_handler(client, message: Message):
 
     
 @app.on_message(filters.text & ~filters.command([
-    "start", "help", "create", "ping", "poll", "cancel", "done", "scr", "tx", "txqz", "htmk", "poll2txt", "shufftxt", "split", 
+    "start", "help", "create", "ping", "poll", "parmar", "cancel", "done", "scr", "tx", "txqz", "htmk", "poll2txt", "shufftxt", "split", 
     "ph", "ai", "ocr", "lo", "do", "arrange"
 ]))
 
