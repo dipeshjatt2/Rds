@@ -18,6 +18,7 @@ import pytz
 from functools import wraps
 from datetime import datetime, timedelta
 from typing import Dict, Tuple, Any
+from telegram.helpers import escape_markdown
 
 from telegram import (
     Update,
@@ -912,39 +913,38 @@ async def _generate_quiz_card_content(quiz_id: str) -> Tuple[str, InlineKeyboard
         
     qs_cur = db_execute("SELECT COUNT(*) as cnt FROM questions WHERE quiz_id = ?", (quiz_id,), commit=False)
     total_q = qs_cur.fetchone()["cnt"]
-    title = qrow["title"] or f"Quiz {quiz_id}"
+    
+    title = escape_markdown(qrow["title"] or f"Quiz {quiz_id}", version=2)
     time_per_q = qrow['time_per_question_sec'] or 30
     negative_marking = qrow['negative_mark']
+    negative_marking_str = escape_markdown(str(negative_marking), version=2)
 
-    # --- UPDATED FORMATTING LOGIC ---
+    # All changes are in this section to escape the hardcoded '#' and '-' characters
     base_lines = [
-        f'💳 Quiz Name: {title}',
-        f'#️⃣ Questions: {total_q}',
-        f'⏰ Timer: {time_per_q} seconds',
-        f'🆔 Quiz ID: `{quiz_id}`',
-        f'🏴‍☠️ -ve Marking: {negative_marking}',
-        '💰 Type: free'
+        f'💳 *Quiz Name:* {title}',
+        f'\\#️⃣ *Questions:* {total_q}',  # FIXED: Escaped the '#' character
+        f'⏰ *Timer:* {time_per_q} seconds',
+        f'🆔 *Quiz ID:* `{quiz_id}`',
+        f'🏴‍☠️ *\\-ve Marking:* {negative_marking_str}',  # FIXED: Escaped the '-' character
+        '💰 *Type:* free'
     ]
     
-    # Fetch and add creator information
     creator_mention_line = ""
     if qrow['creator_id']:
         creator_row = db_execute("SELECT * FROM creators WHERE id = ?", (qrow['creator_id'],), commit=False).fetchone()
         if creator_row:
             if creator_row['username']:
-                creator_mention_line = f"Created by: @{creator_row['username']}"
+                creator_mention_line = f"*Created by:* @{creator_row['username']}"
             elif creator_row['display_name']:
-                 creator_mention_line = f"Created by: {creator_row['display_name']}"
+                 escaped_name = escape_markdown(creator_row['display_name'], version=2)
+                 creator_mention_line = f"*Created by:* {escaped_name}"
     
     if creator_mention_line:
         base_lines.append(creator_mention_line)
 
-    # Add the final call to action lines
-    base_lines.append("\nTap start to play!")
+    base_lines.append("\nTap start to play\\!")
 
-    # Join everything together
     text = "\n".join(base_lines)
-    # --- END OF UPDATED LOGIC ---
     
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("Start this quiz (in this chat) 🧑‍🧑‍🧒‍🧒", callback_data=f"startgroup:{quiz_id}")],
@@ -953,16 +953,19 @@ async def _generate_quiz_card_content(quiz_id: str) -> Tuple[str, InlineKeyboard
     
     return text, kb, total_q, time_per_q
 
+
     
 async def post_quiz_card(bot, chat_id, quiz_id):
     text, kb, _, __ = await _generate_quiz_card_content(quiz_id)
     if text and kb:
-        await bot.send_message(chat_id, text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
+        # CHANGE: Switched to MARKDOWN_V2 to handle the escaped text correctly
+        await bot.send_message(chat_id, text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN_V2)
     else:
         try:
             await bot.send_message(chat_id, "Quiz not found.")
         except Exception:
             pass
+
 
 # +++ ADD THIS ENTIRE NEW FUNCTION +++
 async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1420,8 +1423,19 @@ async def start_quiz_in_group(bot, chat_id: int, quiz_id: str, starter_id: int =
     }
     lock = get_group_lock(session_key)
     await write_session_file(session_path, session, lock)
-    await bot.send_message(chat_id, f"🎯 Quiz starting now: *{qrow['title']}*\nTime per question: {session['time_per_question_sec']}s\nEveryone can answer using the quiz options. Results will be shown at the end.", parse_mode=ParseMode.MARKDOWN)
+    
+    # CHANGE: Escape the title and special characters in the message string
+    escaped_title = escape_markdown(qrow['title'], version=2)
+    message_text = (
+        f"🎯 Quiz starting now: *{escaped_title}*\n"
+        f"Time per question: {session['time_per_question_sec']}s\n"
+        f"Everyone can answer using the quiz options\\. Results will be shown at the end\\."
+    )
+    
+    # CHANGE: Switched to MARKDOWN_V2 for sending
+    await bot.send_message(chat_id, message_text, parse_mode=ParseMode.MARKDOWN_V2)
     await group_send_question(bot, session_key)
+
 
 async def group_send_question(bot, session_key):
     path = get_group_session_path(*session_key)
