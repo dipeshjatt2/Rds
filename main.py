@@ -982,9 +982,9 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
 
         # 4. Wait for polls to arrive (with a timeout)
         try:
-            await asyncio.wait_for(scraping_finished.wait(), timeout=120) 
+            await asyncio.wait_for(scraping_finished.wait(), timeout=1200) 
         except asyncio.TimeoutError:
-            scraped_data["stop_reason"] = "Timeout: No new polls received for 2 minutes."
+            scraped_data["stop_reason"] = "Timeout: No new polls received for 20 minutes."
 
     except Exception as e:
         await status_msg.edit(f"❌ **An error occurred:**\n`{str(e)}`")
