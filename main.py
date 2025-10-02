@@ -802,30 +802,25 @@ async def document_handler(client, message: Message):
 
 
 # ── 4. Main State Machine for Text Messages ──
-# ── 5. Poll Scraper (/poll2txt) ──
-
-
-import re # Make sure this is at the top of your file
-
+# ... (keep your other constants like MAX_POLLS) ...
 MAX_POLLS = 200 # Set the maximum number of polls to fetch
 
 async def run_scraper(main_bot_client: Client, user_message: Message, replied_message: Message):
     """
     This helper function manages the entire userbot scraping process.
     
-    [MODIFIED - V6]:
-      - [CRITICAL FIX]: Corrected the get_messages call from 'message_id=' to 'message_ids='.
-        This was causing the scraper to fail its fetch, skip all logic, 
-        and default to option 0 every time. This should fix the core bug.
+    [MODIFIED - V8 - FINAL]:
+      - Combines the "quiz finished" message detection with the original, robust
+        answer capture logic (checking correct_option_id, then voter_count).
     """
     user_id = user_message.from_user.id
     chat_id = user_message.chat.id
-    status_msg = await main_bot_client.send_message(chat_id, "🚀 **Starting scraper...**\n\nInitializing user session.")
+    status_msg = await main_bot_client.send_message(chat_id, "🚀 **Starting smart scraper...**\n\nInitializing user session.")
 
     scraped_data = {"polls": [], "stop_reason": ""}
-    scraping_finished = asyncio.Event()
+    scraping_finished = asyncio.Event() 
 
-    userbot = None # Define userbot here to access it in finally block
+    userbot = None
     try:
         if not SESSION_STRING:
             await status_msg.edit("❌ **Error:** `SESSION_STRING` is not configured by the bot owner.")
@@ -846,93 +841,76 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
 
         userbot = Client("userbot_session_" + str(user_id), session_string=SESSION_STRING, api_id=API_ID, api_hash=API_HASH, in_memory=True)
 
+        # HANDLER 1: Captures incoming quiz polls
         @userbot.on_message(filters.poll & filters.private)
         async def poll_handler(_, poll_message: Message):
-            """
-            This handler uses the exact answer-fetching logic from Script 2 (save_poll).
-            """
-            # Any poll in this private session MUST be from the quiz bot.
-            
-            # --- [START: EXACT LOGIC FROM SCRIPT 2 'save_poll'] ---
             poll = poll_message.poll
             correct_index = None
 
+            # [RESTORED] Using your original, more robust answer capture logic
             try:
-                # 1. Vote on the poll with the first option
                 await userbot.vote_poll(
                     chat_id=poll_message.chat.id,
                     message_id=poll_message.id,
                     options=[0] # Vote for option index 0
                 )
-                
-                # 2. WAIT 5 SECONDS (Matching Script 2 logic)
                 await asyncio.sleep(5) 
                 
-                # 3. Re-fetch the message to get the updated poll data
-                # [FIXED HERE]: Changed 'message_id' to 'message_ids'
                 updated_message = await userbot.get_messages(
                     chat_id=poll_message.chat.id,
                     message_ids=poll_message.id 
                 )
                 
-                # 4. Reliably get the correct_option_id using all fallbacks
                 if updated_message and updated_message.poll:
                     updated_poll = updated_message.poll
                     
                     # Method 1: Primary check (the direct attribute)
                     correct_index = getattr(updated_poll, "correct_option_id", None)
 
-                    # Method 2: Fallback to voter_count (from Script 2)
+                    # Method 2: Fallback to voter_count (your clever backup)
                     if correct_index is None:
                         for i, option in enumerate(updated_poll.options):
-                            voter_count = getattr(option, "voter_count", 0)
-                            if voter_count > 0:
+                            if getattr(option, "voter_count", 0) > 0:
                                 correct_index = i
                                 break
 
-                    # Method 3: Fallback to 0 if still nothing (from Script 2)
-                    if correct_index is None and updated_poll.type == PollType.QUIZ: # Use Enum
-                        correct_index = 0
-
             except Exception as e:
                 print(f"[Scraper Error] Failed to vote or fetch update: {e}")
-                # Fallback to original poll data if voting fails entirely
-                correct_index = getattr(poll_message.poll, "correct_option_id", None)
             
-            # Final Fallback: If still no correct index, set to 0 for quiz polls (from Script 2)
-            if correct_index is None and poll.type == PollType.QUIZ:
+            # Final Fallback: If all else fails, default to 0 for quiz polls
+            if correct_index is None:
                 correct_index = 0
-            # --- [END: EXACT LOGIC FROM SCRIPT 2 'save_poll'] ---
 
             data = {
                 "text": poll.question,
                 "options": [opt.text for opt in poll.options],
-                "correctIndex": correct_index, # This will now be the TRUE index
+                "correctIndex": correct_index,
                 "explanation": getattr(poll, "explanation", "") or ""
             }
             scraped_data["polls"].append(data)
             
-            # Update progress status
             try:
-                await status_msg.edit(f"📥 **Scraping in progress...**\n\nAnswered and collected **{len(scraped_data['polls'])}/{MAX_POLLS}** polls.")
-            except: # Ignore errors if message is same
+                await status_msg.edit(f"📥 **Scraping in progress...**\n\nCollected **{len(scraped_data['polls'])}/{MAX_POLLS}** polls.")
+            except:
                 pass
 
             if len(scraped_data["polls"]) >= MAX_POLLS:
                 scraped_data["stop_reason"] = f"Reached max limit of {MAX_POLLS} polls."
                 scraping_finished.set()
 
-        # Start the userbot client
+        # HANDLER 2: Listens for the "quiz finished" text message
+        @userbot.on_message(filters.text & filters.private)
+        async def text_handler(_, text_message: Message):
+            if text_message.text and "has finished!" in text_message.text.lower():
+                scraped_data["stop_reason"] = "Quiz completion message received."
+                scraping_finished.set()
+
         await userbot.start()
         
-        # 2. Send the /start command to the QuizBot
         await userbot.send_message(bot_username, f"/start {start_token}")
-        await status_msg.edit("▶️ Sent `/start` command. Waiting for bot's reply...")
-        await asyncio.sleep(4) # Give the bot time to reply
+        await status_msg.edit("▶️ Sent `/start` command. Waiting for bot to reply...")
+        await asyncio.sleep(4) 
 
-        # --- [NEW FEATURE LOGIC] ---
-        # Check the bot's reply for "already took quiz"
-        clicked_ready = False
         last_message = None
         async for msg in userbot.get_chat_history(bot_username, limit=1):
             last_message = msg
@@ -940,100 +918,60 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
         if not last_message:
             raise ValueError("Bot did not reply to the /start command.")
 
-        # CASE 1: We already took the quiz
-        if last_message.text and "you already took this quiz" in last_message.text.lower():
-            await status_msg.edit("👍 Quiz already taken. Clicking 'Try Again'...")
-            
-            if not (last_message.reply_markup and last_message.reply_markup.inline_keyboard):
-                raise ValueError("'Try Again' button not found on 'already taken' message.")
-            
-            # Click "Try Again" (Button 0)
-            await last_message.click(0) 
-            
-            await status_msg.edit("⏳ Waiting for 'I am ready' confirmation...")
-            await asyncio.sleep(3) # Wait for the new message to appear
+        if last_message.reply_markup and last_message.reply_markup.inline_keyboard:
+             await last_message.click(0)
+             await status_msg.edit("👍 Clicked button to start quiz. Now capturing polls...")
+             await asyncio.sleep(3)
+             new_last_message = None
+             async for new_msg in userbot.get_chat_history(bot_username, limit=1):
+                new_last_message = new_msg
+             if new_last_message and new_last_message.reply_markup:
+                 await new_last_message.click(0)
+                 await status_msg.edit("👍 Clicked **I am ready**. Capturing polls...")
 
-            # Now fetch the NEW last message (which must be the 'I am ready' prompt)
-            ready_message = None
-            async for msg in userbot.get_chat_history(bot_username, limit=1):
-                ready_message = msg
-            
-            if not (ready_message and ready_message.reply_markup and ready_message.reply_markup.inline_keyboard):
-                raise ValueError("Could not find the 'I am ready' button after clicking 'Try Again'.")
-            
-            await ready_message.click(0) # Click "I am ready" (Button 0)
-            await status_msg.edit("👍 Clicked **I am ready**. Now answering and capturing polls...")
-            clicked_ready = True
-
-        # CASE 2: This is a fresh quiz (the message has the 'I am ready' button)
-        elif last_message.reply_markup and last_message.reply_markup.inline_keyboard:
-            await status_msg.edit("👍 Fresh quiz. Clicking **I am ready** button...")
-            await last_message.click(0) # Click "I am ready"
-            clicked_ready = True
-        
-        else:
-            # Neither "already taken" nor a button prompt? Error.
-            raise ValueError(f"Bot replied with an unknown message (no buttons found). Text: {last_message.text[:100]}")
-        
-        if not clicked_ready:
-            raise ValueError("A critical error occurred and the 'I am ready' button was not clicked.")
-        # --- [END OF NEW FEATURE LOGIC] ---
-
-
-        # 4. Wait for polls to arrive (with a timeout)
         try:
             await asyncio.wait_for(scraping_finished.wait(), timeout=1200) 
         except asyncio.TimeoutError:
-            scraped_data["stop_reason"] = "Timeout: No new polls received for 20 minutes."
+            scraped_data["stop_reason"] = "Timeout: No new polls or 'finished' message received for 20 minutes."
 
     except Exception as e:
         await status_msg.edit(f"❌ **An error occurred:**\n`{str(e)}`")
         return
     finally:
-        # Stop the userbot and clean up
         if userbot and userbot.is_connected:
             await userbot.stop()
         if user_id in user_sessions:
             del user_sessions[user_id]
-        # Only edit the status message if it hasn't been deleted or encountered an error
         try:
             await status_msg.edit(f"🛑 **Scraping Finished!**\n\nReason: {scraped_data.get('stop_reason', 'N/A')}\nTotal polls collected: {len(scraped_data['polls'])}\n\nFormatting data...")
         except:
-            pass # Ignore if message was already deleted or inaccessible
+            pass 
 
-    # --- Format and Send Data (Matching /data4 format) ---
+    # --- Format and Send Data ---
     if not scraped_data["polls"]:
         await status_msg.edit("🤷 No polls were collected. Nothing to send.")
         return
 
     try:
         lines = []
-        option_labels = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"] # Labels from /data4
+        option_labels = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"] 
 
         for idx, q in enumerate(scraped_data["polls"], start=1):
-            # 1. Question text
             lines.append(f"{idx}. {q['text']}")
-
-            # 2. Options (with ✅ checkmark)
             for i, option in enumerate(q.get("options", [])):
                 correct_mark = " ✅" if q.get("correctIndex") == i else ""
                 label = option_labels[i] if i < len(option_labels) else str(i + 1)
                 lines.append(f"({label}) {option}{correct_mark}")
 
-            # 3. Explanation (with quotes, matching /data4)
             explanation = q.get("explanation", "")
             if explanation:
-                lines.append(f"Ex: “{explanation}”") # Using curly quotes from /data4
+                lines.append(f"Ex: “{explanation}”")
             else:
-                lines.append("Ex: ") # If no explanation, match the format "Ex: "
-
-            # 4. Blank line after "Ex:"
+                lines.append("Ex: ")
             lines.append("")
-            
-            # 5. Extra blank line (between questions)
             lines.append("")
 
-        content = "\n".join(lines).strip() # Use strip() to remove the trailing blank lines
+        content = "\n".join(lines).strip()
         
         output_file = f"quiz_data_{user_id}.txt"
         with open(output_file, "w", encoding="utf-8") as f:
@@ -1043,7 +981,7 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
         await main_bot_client.send_document(
             chat_id=chat_id,
             document=output_file,
-            caption="🎉 **Here is your formatted quiz data!** (Format /data4)"
+            caption="🎉 **Here is your formatted quiz data!** (Smart Scraper)"
         )
         os.remove(output_file)
 
@@ -1054,7 +992,7 @@ async def run_scraper(main_bot_client: Client, user_message: Message, replied_me
 @app.on_message(filters.command("poll2txt"))
 async def poll2txt_handler(client, message: Message):
     """
-    Initiates the poll scraping process.
+    Initiates the smart poll scraping process.
     Usage: Reply to a quiz bot's 'Start message with /poll2txt
     """
     user_id = message.from_user.id
@@ -1068,9 +1006,9 @@ async def poll2txt_handler(client, message: Message):
         return
 
     user_sessions[user_id] = True 
-    # This line is correct and contains no SyntaxError
     asyncio.create_task(run_scraper(client, message, message.reply_to_message))
 
+    
 #ocr
 @app.on_message(filters.command("ocr"))
 async def ocr_handler(client, message: Message):
