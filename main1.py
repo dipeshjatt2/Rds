@@ -1299,30 +1299,57 @@ async def reveal_correct_and_advance_private(bot, session_key, qidx, chosen_idx=
 
 # +++ REPLACEMENT CODE +++
 async def finalize_attempt(bot, session_key, session_data):
-    # +++ ADD THIS CLEANUP BLOCK AT THE TOP +++
     # Cancel any running timer task for this quiz session
     task = running_private_tasks.pop(session_key, None)
     if task:
         task.cancel()
 
-    total = 0.0
-    maxscore = len(session_data["questions"])
+    # Calculate detailed statistics
+    total_questions = len(session_data["questions"])
+    correct = 0
+    wrong = 0
+    skipped = 0
+
     quiz_row = db_execute("SELECT * FROM quizzes WHERE id = ?", (session_data["quiz_id"],), commit=False).fetchone()
     negative = quiz_row["negative_mark"] if quiz_row else 0.0
+    maxscore = len(session_data["questions"])
+
     for idx, q in enumerate(session_data["questions"]):
-        correct = q.get("correctIndex", -1)
-        ans = session_data["answers"][idx]
-        if ans == correct and correct != -1:
-            total += 1.0
-        elif ans != -1 and correct != -1:
-            total -= negative
-    if total < 0: total = 0.0
+        correct_idx = q.get("correctIndex", -1)
+        user_ans = session_data["answers"][idx]
+        
+        if user_ans == -1:
+            skipped += 1
+        elif user_ans == correct_idx:
+            correct += 1
+        else:
+            wrong += 1
+
+    # Calculate score with negative marking
+    score = max(0, correct - (wrong * negative))
+
+    # Create detailed results message
+    results_text = f"""
+📊 *Quiz Results: {quiz_row['title'] if quiz_row else 'Quiz'}*
+
+✅ *Correct:* {correct}
+❌ *Wrong:* {wrong}
+⏭️ *Skipped:* {skipped}
+📝 *Total Questions:* {total_questions}
+
+🏆 *Score:* {score:.2f}/{maxscore}
+📉 *Accuracy:* {(correct/total_questions)*100:.1f}%
+⚖️ *Negative Marking:* {negative} per wrong answer
+
+{"🎉 Excellent!" if correct/total_questions >= 0.8 else "👍 Good job!" if correct/total_questions >= 0.6 else "💪 Keep practicing!"}
+"""
+
     finished_at = datetime.utcnow().isoformat()
     db_execute("UPDATE attempts SET finished_at=?, answers_json=?, score=?, max_score=? WHERE id=?",
-               (finished_at, json.dumps(session_data["answers"]), total, maxscore, session_data["attempt_id"]))
+               (finished_at, json.dumps(session_data["answers"]), score, maxscore, session_data["attempt_id"]))
     
     try:
-        await bot.send_message(session_data["user_id"], f" ✅ Quiz finished! Your score: {total}/{maxscore}")
+        await bot.send_message(session_data["user_id"], results_text, parse_mode=ParseMode.MARKDOWN)
 
         total_quiz_time_sec = len(session_data["questions"]) * session_data.get("time_per_question_sec", 30)
         
