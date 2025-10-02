@@ -807,7 +807,7 @@ async def document_handler(client, message: Message):
 
 import re # Make sure this is at the top of your file
 
-MAX_POLLS = 100 # Set the maximum number of polls to fetch
+MAX_POLLS = 200 # Set the maximum number of polls to fetch
 
 async def run_scraper(main_bot_client: Client, user_message: Message, replied_message: Message):
     """
