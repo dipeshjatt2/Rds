@@ -135,11 +135,13 @@ def db_execute(query, params=(), commit=True):
         db.commit()
     return cur
 
+running_private_tasks: Dict[Tuple[int,int], asyncio.Task] = {} 
 running_group_tasks: Dict[Tuple[int,str], asyncio.Task] = {}
 private_session_locks: Dict[Tuple[int,int], asyncio.Lock] = {}
 group_session_locks: Dict[Tuple[int,str], asyncio.Lock] = {}
 ongoing_sessions = {}
 POLL_ID_TO_SESSION_MAP: Dict[str, Dict[str, Any]] = {}
+
 # --- REPLACE your old generate_quiz_html function with this one ---
 
 async def generate_quiz_html(quiz_settings: dict, questions: list) -> str | None:
@@ -1083,6 +1085,7 @@ async def take_quiz_private(bot, user_id, quiz_id):
         pass
     await send_question_for_session_private(bot, session_key)
 
+# +++ REPLACEMENT CODE +++
 async def send_question_for_session_private(bot, session_key):
     path = get_private_session_path(*session_key)
     lock = get_private_lock(session_key)
@@ -1103,24 +1106,20 @@ async def send_question_for_session_private(bot, session_key):
         except Exception as e:
             print(f"Failed to send photo for private quiz (will continue): {e}")
 
-    # ... (inside the function)
     explanation = q.get("explanation") or None
     question_text = q.get("text")
     poll_question_text = question_text
 
-    # Check if the question is too long for a poll
     if len(question_text) > POLL_QUESTION_MAX_LENGTH:
-        # Send the long question as a separate message first
         await bot.send_message(chat_id=session["chat_id"], text=question_text)
-        # Use a placeholder for the poll question
         poll_question_text = PLACEHOLDER_QUESTION
 
     sent = None
-    for attempt in range(3): # Retry up to 3 times
+    for attempt in range(3):
         try:
             sent = await bot.send_poll(
                 chat_id=session["chat_id"],
-                question=poll_question_text,  # <-- Use the new variable here
+                question=poll_question_text,
                 options=q.get("options"),
                 type=Poll.QUIZ,
                 correct_option_id=q.get("correctIndex", 0),
@@ -1128,24 +1127,44 @@ async def send_question_for_session_private(bot, session_key):
                 is_anonymous=False,
                 explanation=explanation
             )
-            break # Success, break the loop
-# ... (rest of the function)
+            break
         except Exception as e:
             print(f"Attempt {attempt + 1} failed to send private poll: {e}")
-            if attempt < 2: # If not the last attempt
-                await asyncio.sleep(2) # Wait before retrying
-            else: # Last attempt failed
+            if attempt < 2:
+                await asyncio.sleep(2)
+            else:
                 print("All retries failed for private poll. Finalizing quiz.")
                 await finalize_attempt(bot, session_key, session)
                 return
 
-    if not sent: # Should not be reached if the above logic is correct, but as a safeguard
+    if not sent:
         return
 
     session['poll_id'] = sent.poll.id
     session['message_id'] = sent.message_id if hasattr(sent, 'message_id') else None
     POLL_ID_TO_SESSION_MAP[sent.poll.id] = {"type": "private", "key": session_key}
     await write_session_file(path, session, lock)
+
+    # +++ ADD THIS ENTIRE TIMER BLOCK +++
+    # This creates a reliable internal timer to advance the question if the user doesn't answer.
+    old_task = running_private_tasks.pop(session_key, None)
+    if old_task:
+        old_task.cancel()
+
+    async def per_question_timeout_private():
+        try:
+            # Wait for the poll duration + a 2-second buffer
+            await asyncio.sleep(session["time_per_question_sec"] + 2)
+            # Re-read the session to ensure we are still on the same question
+            fresh_session = await read_session_file(path, lock)
+            if fresh_session and fresh_session["current_q"] == qidx:
+                # If still on the same question, force advancement
+                await reveal_correct_and_advance_private(bot, session_key, qidx, timed_out=True)
+        except asyncio.CancelledError:
+            pass # This is expected if the user answers normally
+
+    running_private_tasks[session_key] = asyncio.create_task(per_question_timeout_private())
+
 
 # --- POLL HANDLERS ---
 async def poll_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1250,12 +1269,20 @@ async def poll_update_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         await reveal_correct_and_advance_private(context.bot, session_key, session["current_q"], timed_out=True)
 
 # --- ADVANCEMENT & FINALIZATION LOGIC ---
+# +++ REPLACEMENT CODE +++
 async def reveal_correct_and_advance_private(bot, session_key, qidx, chosen_idx=None, timed_out=False):
     path = get_private_session_path(*session_key)
     lock = get_private_lock(session_key)
     session = await read_session_file(path, lock)
     if not session:
         return
+
+    # +++ ADD THIS CRITICAL CHECK +++
+    # This prevents a race condition. If the user answers AND the poll times out,
+    # this function might be called twice. We check if the quiz has already
+    # advanced past the question index (`qidx`) this call was for.
+    if session.get("current_q") != qidx:
+        return # Do nothing, we've already moved on.
     
     if session.get("poll_id"):
         POLL_ID_TO_SESSION_MAP.pop(session["poll_id"], None)
@@ -1269,7 +1296,15 @@ async def reveal_correct_and_advance_private(bot, session_key, qidx, chosen_idx=
         
     await send_question_for_session_private(bot, session_key)
 
+
+# +++ REPLACEMENT CODE +++
 async def finalize_attempt(bot, session_key, session_data):
+    # +++ ADD THIS CLEANUP BLOCK AT THE TOP +++
+    # Cancel any running timer task for this quiz session
+    task = running_private_tasks.pop(session_key, None)
+    if task:
+        task.cancel()
+
     total = 0.0
     maxscore = len(session_data["questions"])
     quiz_row = db_execute("SELECT * FROM quizzes WHERE id = ?", (session_data["quiz_id"],), commit=False).fetchone()
@@ -1287,10 +1322,8 @@ async def finalize_attempt(bot, session_key, session_data):
                (finished_at, json.dumps(session_data["answers"]), total, maxscore, session_data["attempt_id"]))
     
     try:
-        # Send the score message first
         await bot.send_message(session_data["user_id"], f" ✅ Quiz finished! Your score: {total}/{maxscore}")
 
-        # Now, generate and send the HTML file
         total_quiz_time_sec = len(session_data["questions"]) * session_data.get("time_per_question_sec", 30)
         
         quiz_settings = {
@@ -1311,14 +1344,13 @@ async def finalize_attempt(bot, session_key, session_data):
                     filename=f"{session_data['quiz_id']}_practice.html"
                 )
             finally:
-                os.remove(html_path)  # Always clean up the temp file
+                os.remove(html_path)
 
     except Exception as e:
         print(f"Error sending message or HTML file in finalize_attempt: {e}")
     
     path = get_private_session_path(*session_key)
     await delete_session_file(path, session_key, private_session_locks)
-
 
 async def finish_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
