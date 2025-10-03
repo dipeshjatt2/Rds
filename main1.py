@@ -560,7 +560,31 @@ def ensure_owner_exists(tg_user_id, username=None, display_name=None):
 
 # --- COMMAND HANDLERS ---
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Handles the /start command in both private and group chats.
+    - In private with payload: Starts a private quiz.
+    - In groups with payload: Starts a group quiz.
+    - Otherwise: Shows a welcome message.
+    """
+    chat_type = update.effective_chat.type
     user = update.effective_user
+
+    # Check if the command has arguments (a payload like a quiz_id)
+    if context.args:
+        quiz_id = context.args[0]
+        
+        # Scenario 1: Deep link used in a group chat
+        if chat_type in ['group', 'supergroup']:
+            await start_quiz_in_group(context.bot, update.effective_chat.id, quiz_id, starter_id=user.id)
+            return
+            
+        # Scenario 2: Deep link used in a private chat
+        if chat_type == 'private':
+            await take_quiz_private(context.bot, user.id, quiz_id)
+            return
+
+    # Scenario 3: Normal /start command with no deep link payload
+    # This part will now only run if the command is not a deep link.
     uid = user.id
     uname = user.username or ""
     fullname = ((user.first_name or "") + " " + (user.last_name or "")).strip()
@@ -588,6 +612,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"{owner_commands}"
     )
     await update.effective_message.reply_text(text)
+
 
 async def create_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -894,20 +919,14 @@ async def postcard_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     quiz_id = query.data.split(":")[1]
-    await post_quiz_card(context.bot, query.message.chat.id, quiz_id)
-
-async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    args = update.effective_message.text.split()
-    if len(args) < 2:
-        await update.effective_message.reply_text("Usage: /post <quiz_id>")
-        return
-    quiz_id = args[1]
-    await post_quiz_card(context.bot, update.effective_chat.id, quiz_id)
     
-async def _generate_quiz_card_content(quiz_id: str) -> Tuple[str, InlineKeyboardMarkup, int, int] | Tuple[None, None, None, None]:
+    # FIXED: We now pass the 'context' object to post_quiz_card
+    await post_quiz_card(context.bot, query.message.chat.id, quiz_id, context)
+    
+async def _generate_quiz_card_content(quiz_id: str, context: ContextTypes.DEFAULT_TYPE) -> Tuple[str, InlineKeyboardMarkup, int, int] | Tuple[None, None, None, None]:
     """
     Fetches quiz data and generates the text and keyboard for a quiz card.
-    Returns (text, keyboard, question_count, time_per_question) or (None, None, None, None) if not found.
+    This version uses deep links for both group and private start buttons, and adds a share button.
     """
     qrow = db_execute("SELECT * FROM quizzes WHERE id = ?", (quiz_id,), commit=False).fetchone()
     if not qrow:
@@ -921,13 +940,12 @@ async def _generate_quiz_card_content(quiz_id: str) -> Tuple[str, InlineKeyboard
     negative_marking = qrow['negative_mark']
     negative_marking_str = escape_markdown(str(negative_marking), version=2)
 
-    # All changes are in this section to escape the hardcoded '#' and '-' characters
     base_lines = [
         f'💳 *Quiz Name:* {title}',
-        f'\\#️⃣ *Questions:* {total_q}',  # FIXED: Escaped the '#' character
+        f'\\#️⃣ *Questions:* {total_q}',
         f'⏰ *Timer:* {time_per_q} seconds',
         f'🆔 *Quiz ID:* `{quiz_id}`',
-        f'🏴‍☠️ *\\-ve Marking:* {negative_marking_str}',  # FIXED: Escaped the '-' character
+        f'🏴‍☠️ *\\-ve Marking:* {negative_marking_str}',
         '💰 *Type:* free'
     ]
     
@@ -944,23 +962,36 @@ async def _generate_quiz_card_content(quiz_id: str) -> Tuple[str, InlineKeyboard
     if creator_mention_line:
         base_lines.append(creator_mention_line)
 
-    base_lines.append("\nTap start to play\\!")
+    base_lines.append("\nTap a button below to start or share\\!")
 
     text = "\n".join(base_lines)
+
+    # Dynamically get the bot's username to build the deep links.
+    bot_username = context.bot.username
+    startgroup_link = f"https://t.me/{bot_username}?startgroup={quiz_id}"
+    startprivate_link = f"https://t.me/{bot_username}?start={quiz_id}"
     
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Start this quiz (in this chat) 🧑‍🧑‍🧒‍🧒", callback_data=f"startgroup:{quiz_id}")],
-        [InlineKeyboardButton("Start in private👤", callback_data=f"startprivate:{quiz_id}")]
+        [
+            InlineKeyboardButton("🚀 Start in a Group", url=startgroup_link),
+            InlineKeyboardButton("👤 Start in Private", url=startprivate_link)
+        ],
+        [
+            # This button prompts the user to pick a chat and inserts the bot's inline query.
+            InlineKeyboardButton("🔗 Share Quiz", switch_inline_query=quiz_id)
+        ]
     ])
     
     return text, kb, total_q, time_per_q
 
-
-    
-async def post_quiz_card(bot, chat_id, quiz_id):
-    text, kb, _, __ = await _generate_quiz_card_content(quiz_id)
+async def post_quiz_card(bot, chat_id, quiz_id, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Generates and sends a quiz card. Now requires the 'context' object
+    to pass to the content generator for creating deep links.
+    """
+    # Pass the entire 'context' object to the helper function
+    text, kb, _, __ = await _generate_quiz_card_content(quiz_id, context)
     if text and kb:
-        # CHANGE: Switched to MARKDOWN_V2 to handle the escaped text correctly
         await bot.send_message(chat_id, text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN_V2)
     else:
         try:
@@ -968,21 +999,30 @@ async def post_quiz_card(bot, chat_id, quiz_id):
         except Exception:
             pass
 
+async def post_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles the /post command."""
+    args = update.effective_message.text.split()
+    if len(args) < 2:
+        await update.effective_message.reply_text("Usage: /post <quiz_id>")
+        return
+    quiz_id = args[1]
+    # This call passes the required 'context' to post_quiz_card
+    await post_quiz_card(context.bot, update.effective_chat.id, quiz_id, context)
+
 
 # +++ ADD THIS ENTIRE NEW FUNCTION +++
 async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handles the inline query."""
     query = update.inline_query.query
     
-    # Don't do anything if the query is empty
     if not query:
         return
         
     quiz_id = query.strip()
     results = []
 
-    # Use our helper to get quiz details
-    text, kb, total_q, time_per_q = await _generate_quiz_card_content(quiz_id)
+    # FIXED: Pass the 'context' object to the helper function.
+    text, kb, total_q, time_per_q = await _generate_quiz_card_content(quiz_id, context)
 
     if text and kb:
         # If the quiz is found, create a result article
@@ -993,7 +1033,8 @@ async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 description=f"{total_q} Questions | {time_per_q}s Timer | ID: {quiz_id}",
                 input_message_content=InputTextMessageContent(
                     message_text=text,
-                    parse_mode=ParseMode.MARKDOWN,
+                    # FIXED: Use MARKDOWN_V2 to match the card's text formatting.
+                    parse_mode=ParseMode.MARKDOWN_V2,
                 ),
                 reply_markup=kb,
             )
@@ -1012,26 +1053,6 @@ async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         )
 
     await update.inline_query.answer(results, cache_time=5)
-
-
-
-async def start_private_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer("Starting quiz in private...")
-    quiz_id = query.data.split(":")[1]
-    uid = query.from_user.id
-    try:
-        await context.bot.send_message(uid, "Starting quiz in private for you...")
-        await take_quiz_private(context.bot, uid, quiz_id)
-    except Exception as e:
-        await query.message.reply_text(f"❌ Failed to start in private: {e}")
-
-async def start_group_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer("Starting quiz in this chat...")
-    quiz_id = query.data.split(":")[1]
-    chat_id = query.message.chat.id
-    await start_quiz_in_group(context.bot, chat_id, quiz_id, starter_id=query.from_user.id)
 
 # --- PRIVATE QUIZ LOGIC ---
 async def take_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1958,8 +1979,6 @@ def main():
     app.add_handler(CallbackQueryHandler(delete_quiz_cb, pattern=r"^deletequiz:"))
     app.add_handler(CallbackQueryHandler(export_quiz_cb, pattern=r"^exportquiz:"))
     app.add_handler(CallbackQueryHandler(postcard_cb, pattern=r"^postcard:"))
-    app.add_handler(CallbackQueryHandler(start_private_cb, pattern=r"^startprivate:"))
-    app.add_handler(CallbackQueryHandler(start_group_cb, pattern=r"^startgroup:"))
     
     # Poll Handlers
     app.add_handler(PollAnswerHandler(poll_answer_handler))
