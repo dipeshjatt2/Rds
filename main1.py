@@ -1063,6 +1063,17 @@ async def take_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await take_quiz_private(context.bot, update.effective_user.id, quiz_id)
 
 async def take_quiz_private(bot, user_id, quiz_id):
+    # --- ADDED CHECK ---
+    # Look for any existing session file for this user
+    active_sessions = glob.glob(os.path.join(SESSION_DIR, f"private_{user_id}_*.json"))
+    if active_sessions:
+        try:
+            await bot.send_message(user_id, "❌ You already have a quiz in progress. Please finish it with /finish before starting a new one.")
+        except:
+            pass
+        return
+    # --- END OF ADDED CHECK ---
+
     qrow = db_execute("SELECT * FROM quizzes WHERE id = ?", (quiz_id,), commit=False).fetchone()
     if not qrow:
         try:
@@ -1431,25 +1442,33 @@ async def finish_command_handler(update: Update, context: ContextTypes.DEFAULT_T
         await update.effective_message.reply_text("Finishing your quiz now and calculating results...")
         await finalize_attempt(context.bot, session_key, session_data)
         
-    else: # Group chat
-        args = context.args
-        if not args:
-            await update.effective_message.reply_text(
-                "In a group, you must specify which quiz to finish.\n"
-                "Usage: `/finish <quiz_id>`\n"
-                "(Only admins or the quiz starter can do this.)"
-            )
-            return
-            
-        quiz_id = args[0]
+    else: # Group chat - REVISED LOGIC
         chat_id = chat.id
+        quiz_id = None
+        session_path = None
+        
+        if context.args:
+            # User provided a quiz ID, use the old logic
+            quiz_id = context.args[0]
+            session_path = get_group_session_path(chat_id, quiz_id)
+            if not os.path.exists(session_path):
+                await update.effective_message.reply_text(f"No active quiz found with ID: `{quiz_id}`", parse_mode=ParseMode.MARKDOWN)
+                return
+        else:
+            # User just sent /finish, let's find the active quiz
+            active_group_sessions = glob.glob(os.path.join(SESSION_DIR, f"group_{chat_id}_*.json"))
+            if not active_group_sessions:
+                await update.effective_message.reply_text("There is no active quiz in this group to finish.")
+                return
+            
+            # Since we now only allow one quiz, this list should have only one item
+            session_path = active_group_sessions[0]
+            # Extract quiz_id from the filename
+            filename = os.path.basename(session_path)
+            quiz_id = filename.replace(f"group_{chat_id}_", "").replace(".json", "")
+
+        # Now we have the quiz_id and session_path, proceed with permission check and finalization
         session_key = (chat_id, quiz_id)
-        session_path = get_group_session_path(chat_id, quiz_id)
-
-        if not os.path.exists(session_path):
-            await update.effective_message.reply_text(f"No active quiz found in this chat with ID: `{quiz_id}`", parse_mode=ParseMode.MARKDOWN)
-            return
-
         try:
             admins = await context.bot.get_chat_administrators(chat_id)
             admin_ids = {admin.user.id for admin in admins}
@@ -1484,11 +1503,16 @@ async def start_quiz_in_group(bot, chat_id: int, quiz_id: str, starter_id: int =
             pass
         return
     questions = [questions_from_json(qr["q_json"]) for qr in qrows]
+        # --- MODIFIED CHECK ---
+    # Look for any existing session file for this chat
+    active_group_sessions = glob.glob(os.path.join(SESSION_DIR, f"group_{chat_id}_*.json"))
+    if active_group_sessions:
+        await bot.send_message(chat_id, f"❌ A quiz is already running in this group. Please finish it with /finish before starting a new one.")
+        return
+    # --- END OF MODIFIED CHECK ---
+
     session_key = (chat_id, quiz_id)
     session_path = get_group_session_path(*session_key)
-    if os.path.exists(session_path):
-        await bot.send_message(chat_id, f"A quiz with this ID (`{quiz_id}`) is already running. Use `/finish {quiz_id}` to stop it before starting a new one.")
-        return
     session = {
         "quiz_id": quiz_id,
         "chat_id": chat_id,
