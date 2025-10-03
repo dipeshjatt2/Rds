@@ -2158,10 +2158,97 @@ async def download_file_handler(client, message: Message):
     except Exception as e:
         await message.reply_text(f"❌ An unexpected error occurred: {str(e)}")
 
+# ── [NEW] HTML-to-Text Converter (/ht2txt) ──
+
+@app.on_message(filters.command("ht2txt"))
+async def html_to_txt_handler(client, message: Message):
+    """
+    Parses an HTML quiz file (containing a quizData JS object)
+    and converts it into a formatted .txt file.
+    Usage: Reply to an HTML file with /ht2txt
+    """
+    # --- 1. Validate Input ---
+    if not message.reply_to_message or not message.reply_to_message.document:
+        await message.reply_text("⚠️ **Usage:** Please reply to an HTML file with `/ht2txt`.")
+        return
+
+    doc = message.reply_to_message.document
+    fname = (doc.file_name or "file.html").lower()
+    if not (fname.endswith(".html") or fname.endswith(".htm")):
+        await message.reply_text("❌ This is not an HTML file. Please reply to a `.html` file.")
+        return
+
+    status_msg = await message.reply_text("⏳ Processing HTML file...")
+
+    try:
+        # --- 2. Download and Read File ---
+        path = await message.reply_to_message.download()
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            html_content = f.read()
+        os.remove(path) # Clean up the downloaded file
+
+        # --- 3. Extract and Parse Quiz Data ---
+        # Use regex to find the 'quizData' JavaScript object within the HTML
+        match = re.search(r'const\s+quizData\s*=\s*({.*?});', html_content, flags=re.S)
+        if not match:
+            await status_msg.edit("❌ Could not find `quizData` in the HTML file. The format might be unsupported.")
+            return
+
+        json_string = match.group(1)
+        try:
+            data = json.loads(json_string)
+            questions = data.get("questions", [])
+        except json.JSONDecodeError:
+            await status_msg.edit("❌ Failed to parse the quiz data from the HTML. It might be malformed.")
+            return
+        
+        if not questions:
+            await status_msg.edit("🤷 No questions found in the file.")
+            return
+
+        # --- 4. Format the Data into Text ---
+        await status_msg.edit(f"✅ Found {len(questions)} questions. Formatting to .txt...")
+        
+        out_lines = []
+        for i, q in enumerate(questions, start=1):
+            q_text = q.get("text", "No question text").strip().replace("\n", " ")
+            out_lines.append(f"{i}. {q_text}")
+
+            options = q.get("options", [])
+            correct_index = q.get("correctIndex", -1)
+
+            for idx, opt in enumerate(options):
+                mark = " ✅" if idx == correct_index else ""
+                out_lines.append(f"({chr(97 + idx)}) {opt.strip()}{mark}")
+
+            explanation = q.get("explanation", "").strip()
+            if explanation:
+                out_lines.append(f"Ex: {explanation}")
+            else:
+                out_lines.append("Ex: ") # Add empty explanation if none exists
+
+            out_lines.append("") # Add a blank line between questions
+
+        # --- 5. Create and Send the .txt File ---
+        final_txt = "\n".join(out_lines).strip()
+        # Encode with 'utf-8-sig' to include BOM, as requested
+        file_obj = io.BytesIO(final_txt.encode("utf-8-sig"))
+        
+        base_name = os.path.splitext(os.path.basename(fname))[0]
+        file_obj.name = f"{base_name}_converted.txt"
+
+        await message.reply_document(
+            file_obj,
+            caption=f"✅ HTML converted successfully!"
+        )
+        await status_msg.delete()
+
+    except Exception as e:
+        await status_msg.edit(f"❌ An unexpected error occurred: {str(e)}")
 
     
 @app.on_message(filters.text & ~filters.command([
-    "start", "help", "create", "ping", "poll", "parmar", "cancel", "done", "scr", "tx", "txqz", "htmk", "poll2txt", "shufftxt", "split", 
+    "start", "help", "create", "ping", "poll", "parmar", "ht2txt", "cancel", "done", "scr", "tx", "txqz", "htmk", "poll2txt", "shufftxt", "split", 
     "ph", "ai", "ocr", "lo", "do", "arrange"
 ]))
 
