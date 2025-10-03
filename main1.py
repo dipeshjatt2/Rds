@@ -1,6 +1,7 @@
 import os
 import io
 import re
+import math 
 import json
 import csv
 import time
@@ -141,6 +142,144 @@ private_session_locks: Dict[Tuple[int,int], asyncio.Lock] = {}
 group_session_locks: Dict[Tuple[int,str], asyncio.Lock] = {}
 ongoing_sessions = {}
 POLL_ID_TO_SESSION_MAP: Dict[str, Dict[str, Any]] = {}
+
+# --- ADD THIS NEW FUNCTION (e.g., after myquizzes_handler) ---
+
+async def manage_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles the /manage command with a paginated list for quiz management."""
+    uid = update.effective_user.id
+    c = get_creator_by_tg(uid)
+    if not c:
+        await update.effective_message.reply_text("You haven't created any quizzes yet.")
+        return
+        
+    cur = db_execute("SELECT * FROM quizzes WHERE creator_id = ? ORDER BY created_at DESC", (c["id"],), commit=False)
+    rows = cur.fetchall()
+    
+    text, kb = create_paginated_keyboard(rows, page=0, page_size=5, command_base="manage")
+    
+    if kb:
+        await update.effective_message.reply_text(text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN_V2)
+    else:
+        await update.effective_message.reply_text(text)
+
+
+# --- ADD THIS ENTIRE BLOCK ---
+
+# --- REPLACE your entire create_paginated_keyboard function with this final version ---
+
+def create_paginated_keyboard(quizzes: list, page: int, page_size: int, command_base: str):
+    """
+    Generates a detailed, paginated text and an InlineKeyboardMarkup for quiz lists.
+
+    Args:
+        quizzes: A list of quiz records from the database.
+        page: The current page number (0-indexed).
+        page_size: The number of items per page.
+        command_base: A string ('myquizzes' or 'manage') to build callback data.
+
+    Returns:
+        A tuple of (message_text, InlineKeyboardMarkup).
+    """
+    if not quizzes:
+        return "You haven't created any quizzes yet\\. Use /create to start\\.", None
+
+    total_quizzes = len(quizzes)
+    total_pages = math.ceil(total_quizzes / page_size)
+    page = max(0, min(page, total_pages - 1))
+
+    start_index = page * page_size
+    end_index = start_index + page_size
+    page_quizzes = quizzes[start_index:end_index]
+
+    header = [
+        f"📝 *Your Quizzes \\(Page {page + 1}/{total_pages}\\)*",
+        f"📊 *Total Quizzes:* {total_quizzes}"
+    ]
+    
+    quiz_details_list = []
+    for i, r in enumerate(page_quizzes, start=start_index + 1):
+        q_count_row = db_execute("SELECT COUNT(*) as cnt FROM questions WHERE quiz_id = ?", (r['id'],), commit=False).fetchone()
+        q_count = q_count_row['cnt'] if q_count_row else 0
+        
+        title = escape_markdown(r['title'], version=2)
+        quiz_id = escape_markdown(r['id'], version=2)
+
+        # +++ THIS IS THE FIX +++
+        # Convert the negative mark to a string and explicitly escape the decimal point
+        neg_mark_str = str(r['negative_mark']).replace('.', '\\.')
+
+        details = (
+            f"{i}\\. *{title}*\n"
+            f"    └ 🆔 *ID:* `{quiz_id}`\n"
+            f"    └ ❓ *Questions:* {q_count}\n"
+            f"    └ ⏰ *Timer:* {r['time_per_question_sec']}s per question\n"
+            f"    └ 📉 *Negative Mark:* {neg_mark_str}" # Use the new escaped string
+        )
+        quiz_details_list.append(details)
+
+    separator = "\n\n────────────────\n\n"
+    final_text = "\n".join(header) + "\n\n" + separator.join(quiz_details_list)
+
+    kb = []
+    for r in page_quizzes:
+        title = r['title']
+        if len(title) > 40:
+            title = title[:37] + "..."
+            
+        if command_base == 'myquizzes':
+            callback_action = f"postcard:{r['id']}"
+        else: # 'manage'
+            callback_action = f"viewquiz:{r['id']}"
+        
+        kb.append([InlineKeyboardButton(f"{title}", callback_data=callback_action)])
+
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton("⬅️ Back", callback_data=f"{command_base}_page:{page - 1}"))
+    
+    # Using the page number format you requested in the reference
+    nav_row.append(InlineKeyboardButton(f"{page + 1}/{total_pages}", callback_data="noop")) 
+
+    if page < total_pages - 1:
+        nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"{command_base}_page:{page + 1}"))
+    
+    if len(nav_row) > 1:
+        kb.append(nav_row)
+        
+    return final_text, InlineKeyboardMarkup(kb)
+
+async def paginated_quiz_list_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles 'next' and 'back' buttons for paginated quiz lists."""
+    query = update.callback_query
+    await query.answer()
+    
+    command_base, page_str = query.data.split('_page:')
+    page = int(page_str)
+    
+    uid = query.from_user.id
+    c = get_creator_by_tg(uid)
+    if not c:
+        await query.edit_message_text("Could not find your creator profile.")
+        return
+        
+    cur = db_execute("SELECT * FROM quizzes WHERE creator_id = ? ORDER BY created_at DESC", (c["id"],), commit=False)
+    rows = cur.fetchall()
+    
+    text, kb = create_paginated_keyboard(rows, page=page, page_size=5, command_base=command_base)
+    
+    try:
+        await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN_V2)
+    except Exception as e:
+        print(f"Error updating paginated list: {e}")
+
+
+async def noop_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Answers the callback query for buttons that should do nothing."""
+    await update.callback_query.answer()
+
+# --- END OF BLOCK TO ADD ---
+
 
 # --- REPLACE your old generate_quiz_html function with this one ---
 
@@ -834,24 +973,24 @@ async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
 
+# --- REPLACE your old myquizzes_handler function with this one ---
+
 async def myquizzes_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     c = get_creator_by_tg(uid)
     if not c:
         await update.effective_message.reply_text("You haven't created any quizzes yet. Use /create to start.")
         return
+        
     cur = db_execute("SELECT * FROM quizzes WHERE creator_id = ? ORDER BY created_at DESC", (c["id"],), commit=False)
     rows = cur.fetchall()
-    if not rows:
-        await update.effective_message.reply_text("You have no quizzes yet.")
-        return
-    text_lines = []
-    kb = []
-    for r in rows:
-        tp = r['time_per_question_sec'] or '-'
-        text_lines.append(f"ID: {r['id']} | {r['title']} | Time/q: {tp}s | Neg: {r['negative_mark']}")
-        kb.append([InlineKeyboardButton(f"{r['id']}: {r['title']}", callback_data=f"viewquiz:{r['id']}")])
-    await update.effective_message.reply_text("\n".join(text_lines), reply_markup=InlineKeyboardMarkup(kb))
+    
+    text, kb = create_paginated_keyboard(rows, page=0, page_size=5, command_base="myquizzes")
+    
+    if kb:
+        await update.effective_message.reply_text(text, reply_markup=kb, parse_mode=ParseMode.MARKDOWN_V2)
+    else:
+        await update.effective_message.reply_text(text)
 
 # --- CALLBACK QUERY HANDLERS ---
 async def view_quiz_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1985,6 +2124,7 @@ def main():
     app.add_handler(CommandHandler("no_images", no_images_command_handler))
     app.add_handler(CommandHandler("myquizzes", myquizzes_handler))
     app.add_handler(CommandHandler("take", take_handler))
+    app.add_handler(CommandHandler("manage", manage_handler))
     app.add_handler(CommandHandler("post", post_command))
     app.add_handler(CommandHandler("finish", finish_command_handler))
     app.add_handler(CommandHandler("backup", backup_handler))
@@ -2001,6 +2141,8 @@ def main():
     # Callback Query Handlers
     app.add_handler(CallbackQueryHandler(view_quiz_cb, pattern=r"^viewquiz:"))
     app.add_handler(CallbackQueryHandler(delete_quiz_cb, pattern=r"^deletequiz:"))
+    app.add_handler(CallbackQueryHandler(paginated_quiz_list_cb, pattern=r"^(myquizzes_page:|manage_page:)"))
+    app.add_handler(CallbackQueryHandler(noop_cb, pattern=r"^noop$"))
     app.add_handler(CallbackQueryHandler(export_quiz_cb, pattern=r"^exportquiz:"))
     app.add_handler(CallbackQueryHandler(postcard_cb, pattern=r"^postcard:"))
     
