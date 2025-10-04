@@ -1,37 +1,77 @@
-{% extends "layout.html" %}
-{% block content %}
-<h1 class="text-3xl font-bold mb-6 text-gray-100">Creators</h1>
-<div class="bg-gray-800 rounded-lg shadow-md overflow-hidden">
-    <table class="w-full text-left">
-        <thead class="bg-gray-700">
-            <tr>
-                <th class="table-cell">Display Name</th>
-                <th class="table-cell">Username</th>
-                <th class="table-cell">Telegram ID</th>
-                <th class="table-cell text-center">Quizzes Created</th>
-                <th class="table-cell">Actions</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for creator in creators %}
-            <tr class="border-b border-gray-700 hover:bg-gray-700/50">
-                <td class="table-cell">{{ creator.display_name }}</td>
-                <td class="table-cell">{{ '@' + creator.username if creator.username else 'N/A' }}</td>
-                <td class="table-cell font-mono">{{ creator.tg_user_id }}</td>
-                <td class="table-cell text-center font-bold">{{ creator.quiz_count }}</td>
-                <td class="table-cell">
-                    <a href="{{ url_for('quizzes_list', creator_id=creator.id) }}" 
-                       class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold py-1 px-3 rounded">
-                       View Quizzes
-                    </a>
-                </td>
-            </tr>
-            {% else %}
-            <tr>
-                <td colspan="5" class="table-cell text-center text-gray-400">No creators found.</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
-{% endblock %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Creators - Quiz Management</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100">
+    <nav class="bg-blue-600 text-white p-4">
+        <div class="container mx-auto flex justify-between items-center">
+            <h1 class="text-xl font-bold">Quiz Management System</h1>
+            <div>
+                <a href="{{ url_for('dashboard') }}" class="mx-2 hover:text-blue-200">Dashboard</a>
+                <a href="{{ url_for('creators') }}" class="mx-2 hover:text-blue-200">Creators</a>
+                <a href="{{ url_for('quizzes') }}" class="mx-2 hover:text-blue-200">Quizzes</a>
+                <a href="{{ url_for('attempts') }}" class="mx-2 hover:text-blue-200">Attempts</a>
+                <a href="{{ url_for('logout') }}" class="mx-2 hover:text-blue-200">Logout</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mx-auto p-6">
+        <h2 class="text-3xl font-bold mb-6 text-gray-800">All Creators</h2>
+        
+        <div class="bg-white rounded-lg shadow-md overflow-hidden">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User Info</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Quizzes</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Admin</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for creator in creators %}
+                    <tr class="hover:bg-gray-50">
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ creator['id'] }}</td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <div class="text-sm font-medium text-gray-900">
+                                {{ creator['display_name'] or 'Unknown' }}
+                            </div>
+                            <div class="text-sm text-gray-500">
+                                @{{ creator['username'] or 'no-username' }}
+                            </div>
+                            <div class="text-sm text-gray-500">
+                                TG ID: {{ creator['tg_user_id'] }}
+                            </div>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {{ creator['quiz_count'] }}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {% if creator['is_admin'] %}
+                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
+                                Admin
+                            </span>
+                            {% else %}
+                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800">
+                                User
+                            </span>
+                            {% endif %}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                            <a href="{{ url_for('creator_detail', creator_id=creator['id']) }}" 
+                               class="text-blue-600 hover:text-blue-900">View Details</a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>
