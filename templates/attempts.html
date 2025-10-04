@@ -1,0 +1,32 @@
+{% extends "layout.html" %}
+{% block content %}
+<h1 class="text-3xl font-bold mb-6 text-gray-100">Quiz Attempts (Recent 100)</h1>
+<div class="bg-gray-800 rounded-lg shadow-md overflow-hidden">
+    <table class="w-full text-left">
+        <thead class="bg-gray-700">
+            <tr>
+                <th class="table-cell">Quiz Title</th>
+                <th class="table-cell">User ID</th>
+                <th class="table-cell">Username</th>
+                <th class="table-cell">Score</th>
+                <th class="table-cell">Started At (UTC)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for attempt in attempts %}
+            <tr class="border-b border-gray-700 hover:bg-gray-700/50">
+                <td class="table-cell font-semibold">{{ attempt.quiz_title }}</td>
+                <td class="table-cell font-mono">{{ attempt.user_id }}</td>
+                <td class="table-cell">{{ attempt.username }}</td>
+                <td class="table-cell font-bold">{{ "%.2f"|format(attempt.score) }} / {{ "%.0f"|format(attempt.max_score) }}</td>
+                <td class="table-cell">{{ attempt.started_at }}</td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="5" class="table-cell text-center text-gray-400">No attempts found.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
