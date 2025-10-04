@@ -365,11 +365,12 @@ def export_quiz(quiz_id):
     
     output.seek(0)
     
+    # FIX: Use attachment_filename instead of download_name
     return send_file(
         io.BytesIO(output.getvalue().encode('utf-8')),
         mimetype='text/csv',
         as_attachment=True,
-        download_name=f'quiz_{quiz_id}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+        attachment_filename=f'quiz_{quiz_id}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
     )
 
 # API endpoints for statistics
