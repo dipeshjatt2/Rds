@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ quiz.title }} - Quiz Management</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100">
+    <nav class="bg-blue-600 text-white p-4">
+        <div class="container mx-auto flex justify-between items-center">
+            <h1 class="text-xl font-bold">Quiz Management System</h1>
+            <div>
+                <a href="{{ url_for('dashboard') }}" class="mx-2 hover:text-blue-200">Dashboard</a>
+                <a href="{{ url_for('creators') }}" class="mx-2 hover:text-blue-200">Creators</a>
+                <a href="{{ url_for('quizzes') }}" class="mx-2 hover:text-blue-200">Quizzes</a>
+                <a href="{{ url_for('attempts') }}" class="mx-2 hover:text-blue-200">Attempts</a>
+                <a href="{{ url_for('logout') }}" class="mx-2 hover:text-blue-200">Logout</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mx-auto p-6">
+        <div class="mb-6">
+            <a href="{{ url_for('quizzes') }}" class="text-blue-600 hover:text-blue-800 mb-4 inline-block">← Back to Quizzes</a>
+            <div class="flex justify-between items-start">
+                <div>
+                    <h2 class="text-3xl font-bold text-gray-800">{{ quiz['title'] }}</h2>
+                    <p class="text-gray-600">ID: {{ quiz['id'] }}</p>
+                </div>
+                <div class="flex space-x-2">
+                    <a href="{{ url_for('export_quiz', quiz_id=quiz['id']) }}" 
+                       class="bg-green-500 hover:bg-green-700 text-white px-4 py-2 rounded">
+                        Export CSV
+                    </a>
+                    <button onclick="deleteQuiz('{{ quiz['id'] }}')" 
+                            class="bg-red-500 hover:bg-red-700 text-white px-4 py-2 rounded">
+                        Delete Quiz
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quiz Info -->
+        <div class="bg-white p-6 rounded-lg shadow-md mb-6">
+            <h3 class="text-xl font-semibold mb-4">Quiz Information</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                    <p><strong>Creator:</strong> {{ quiz['username'] or quiz['display_name'] or 'Unknown' }}</p>
+                    <p><strong>Total Time:</strong> {{ quiz['total_time_min'] }} minutes</p>
+                </div>
+                <div>
+                    <p><strong>Time per Question:</strong> {{ quiz['time_per_question_sec'] }} seconds</p>
+                    <p><strong>Negative Marking:</strong> {{ quiz['negative_mark'] }}</p>
+                </div>
+                <div>
+                    <p><strong>Questions:</strong> {{ questions|length }}</p>
+                    <p><strong>Created:</strong> {{ quiz['created_at'][:16] }}</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Questions -->
+        <div class="bg-white p-6 rounded-lg shadow-md mb-6">
+            <h3 class="text-xl font-semibold mb-4">Questions ({{ questions|length }})</h3>
+            <div class="space-y-6">
+                {% for question in questions %}
+                <div class="border border-gray-200 rounded-lg p-4" id="question-{{ question.db_id }}">
+                    <div class="flex justify-between items-start mb-3">
+                        <h4 class="text-lg font-semibold">Question {{ loop.index }}</h4>
+                        <div class="flex space-x-2">
+                            <button onclick="editQuestion({{ question.db_id }})" 
+                                    class="bg-blue-500 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm">
+                                Edit
+                            </button>
+                            <button onclick="deleteQuestion({{ question.db_id }})" 
+                                    class="bg-red-500 hover:bg-red-700 text-white px-3 py-1 rounded text-sm">
+                                Delete
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <p class="font-medium">{{ question.text }}</p>
+                    </div>
+                    
+                    <div class="space-y-2 mb-3">
+                        {% for option in question.options %}
+                        <div class="flex items-center">
+                            <span class="w-6 h-6 flex items-center justify-center rounded-full border border-gray-300 mr-2 
+                                        {% if loop.index0 == question.correctIndex %}bg-green-100 border-green-500{% endif %}">
+                                {{ ['A', 'B', 'C', 'D'][loop.index0] }}
+                            </span>
+                            <span {% if loop.index0 == question.correctIndex %}class="font-semibold text-green-700"{% endif %}>
+                                {{ option }}
+                            </span>
+                            {% if loop.index0 == question.correctIndex %}
+                            <span class="ml-2 text-green-600 font-semibold">✓ Correct</span>
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                    
+                    {% if question.explanation %}
+                    <div class="bg-gray-50 p-3 rounded border">
+                        <strong>Explanation:</strong> {{ question.explanation }}
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Attempts -->
+        <div class="bg-white p-6 rounded-lg shadow-md">
+            <h3 class="text-xl font-semibold mb-4">Quiz Attempts ({{ attempts|length }})</h3>
+            {% if attempts %}
+            <div class="space-y-3">
+                {% for attempt in attempts %}
+                <div class="border-b pb-3">
+                    <a href="{{ url_for('attempt_detail', attempt_id=attempt['id']) }}" 
+                       class="font-semibold text-blue-600 hover:text-blue-800">
+                        Attempt #{{ attempt['id'] }}
+                    </a>
+                    <p class="text-sm text-gray-600">
+                        User: {{ attempt['username'] or attempt['user_id'] }}
+                        {% if attempt['score'] is not none %}
+                        - Score: {{ "%.2f"|format(attempt['score']) }}/{{ attempt['max_score'] }}
+                        {% endif %}
+                    </p>
+                    <p class="text-xs text-gray-500">
+                        Started: {{ attempt['started_at'][:16] }}
+                        {% if attempt['finished_at'] %}
+                        - Finished: {{ attempt['finished_at'][:16] }}
+                        {% endif %}
+                    </p>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-gray-600">No attempts recorded for this quiz.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Edit Question Modal -->
+    <div id="editModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden">
+        <div class="relative top-20 mx-auto p-5 border w-11/12 md:w-3/4 lg:w-1/2 shadow-lg rounded-md bg-white">
+            <div class="mt-3">
+                <h3 class="text-lg font-medium text-gray-900 mb-4">Edit Question</h3>
+                <form id="editForm">
+                    <input type="hidden" id="editQuestionId">
+                    
+                    <div class="mb-4">
+                        <label class="block text-gray-700 text-sm font-bold mb-2">Question Text</label>
+                        <textarea id="editQuestionText" class="w-full border rounded p-2" rows="3"></textarea>
+                    </div>
+                    
+                    <div class="mb-4">
+                        <label class="block text-gray-700 text-sm font-bold mb-2">Options</label>
+                        <div id="optionsContainer">
+                            <!-- Options will be populated here -->
+                        </div>
+                    </div>
+                    
+                    <div class="mb-4">
+                        <label class="block text-gray-700 text-sm font-bold mb-2">Correct Answer</label>
+                        <select id="editCorrectIndex" class="w-full border rounded p-2">
+                            <option value="0">A</option>
+                            <option value="1">B</option>
+                            <option value="2">C</option>
+                            <option value="3">D</option>
+                        </select>
+                    </div>
+                    
+                    <div class="mb-4">
+                        <label class="block text-gray-700 text-sm font-bold mb-2">Explanation</label>
+                        <textarea id="editExplanation" class="w-full border rounded p-2" rows="2"></textarea>
+                    </div>
+                    
+                    <div class="flex justify-end space-x-2">
+                        <button type="button" onclick="closeModal()" 
+                                class="bg-gray-500 hover:bg-gray-700 text-white px-4 py-2 rounded">
+                            Cancel
+                        </button>
+                        <button type="submit" 
+                                class="bg-blue-500 hover:bg-blue-700 text-white px-4 py-2 rounded">
+                            Save Changes
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    function deleteQuiz(quizId) {
+        if (confirm('Are you sure you want to delete this quiz? This will also delete all questions and attempts associated with it.')) {
+            fetch(`/delete_quiz/${quizId}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Quiz deleted successfully');
+                    window.location.href = "{{ url_for('quizzes') }}";
+                } else {
+                    alert('Error: ' + data.message);
+                }
+            })
+            .catch(error => {
+                alert('Error deleting quiz: ' + error);
+            });
+        }
+    }
+
+    function deleteQuestion(questionId) {
+        if (confirm('Are you sure you want to delete this question?')) {
+            fetch(`/delete_question/${questionId}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Question deleted successfully');
+                    location.reload();
+                } else {
+                    alert('Error: ' + data.message);
+                }
+            })
+            .catch(error => {
+                alert('Error deleting question: ' + error);
+            });
+        }
+    }
+
+    function editQuestion(questionId) {
+        const questionElement = document.getElementById(`question-${questionId}`);
+        const questionText = questionElement.querySelector('p.font-medium').textContent;
+        const options = Array.from(questionElement.querySelectorAll('.flex.items-center span:not(.w-6)'))
+            .filter(el => !el.classList.contains('ml-2'))
+            .map(el => el.textContent.trim())
+            .slice(0, 4);
+        
+        const correctIndex = Array.from(questionElement.querySelectorAll('.flex.items-center'))
+            .findIndex(el => el.querySelector('.text-green-600'));
+        
+        const explanationElement = questionElement.querySelector('.bg-gray-50');
+        const explanation = explanationElement ? explanationElement.textContent.replace('Explanation:', '').trim() : '';
+
+        document.getElementById('editQuestionId').value = questionId;
+        document.getElementById('editQuestionText').value = questionText;
+        document.getElementById('editCorrectIndex').value = correctIndex;
+        document.getElementById('editExplanation').value = explanation;
+
+        const optionsContainer = document.getElementById('optionsContainer');
+        optionsContainer.innerHTML = '';
+        options.forEach((option, index) => {
+            const optionDiv = document.createElement('div');
+            optionDiv.className = 'mb-2';
+            optionDiv.innerHTML = `
+                <label class="block text-gray-700 text-sm mb-1">Option ${String.fromCharCode(65 + index)}</label>
+                <input type="text" class="w-full border rounded p-2 option-input" 
+                       value="${option}" data-index="${index}">
+            `;
+            optionsContainer.appendChild(optionDiv);
+        });
+
+        document.getElementById('editModal').classList.remove('hidden');
+    }
+
+    function closeModal() {
+        document.getElementById('editModal').classList.add('hidden');
+    }
+
+    document.getElementById('editForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const questionId = document.getElementById('editQuestionId').value;
+        const questionText = document.getElementById('editQuestionText').value;
+        const correctIndex = parseInt(document.getElementById('editCorrectIndex').value);
+        const explanation = document.getElementById('editExplanation').value;
+        
+        const options = Array.from(document.querySelectorAll('.option-input'))
+            .map(input => input.value)
+            .filter(opt => opt.trim() !== '');
+        
+        const questionData = {
+            text: questionText,
+            options: options,
+            correctIndex: correctIndex,
+            explanation: explanation
+        };
+
+        fetch(`/edit_question/${questionId}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(questionData)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                alert('Question updated successfully');
+                closeModal();
+                location.reload();
+            } else {
+                alert('Error: ' + data.message);
+            }
+        })
+        .catch(error => {
+            alert('Error updating question: ' + error);
+        });
+    });
+
+    // Close modal when clicking outside
+    window.onclick = function(event) {
+        const modal = document.getElementById('editModal');
+        if (event.target === modal) {
+            closeModal();
+        }
+    }
+    </script>
+</body>
+</html>
