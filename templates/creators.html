@@ -1,0 +1,37 @@
+{% extends "layout.html" %}
+{% block content %}
+<h1 class="text-3xl font-bold mb-6 text-gray-100">Creators</h1>
+<div class="bg-gray-800 rounded-lg shadow-md overflow-hidden">
+    <table class="w-full text-left">
+        <thead class="bg-gray-700">
+            <tr>
+                <th class="table-cell">Display Name</th>
+                <th class="table-cell">Username</th>
+                <th class="table-cell">Telegram ID</th>
+                <th class="table-cell text-center">Quizzes Created</th>
+                <th class="table-cell">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for creator in creators %}
+            <tr class="border-b border-gray-700 hover:bg-gray-700/50">
+                <td class="table-cell">{{ creator.display_name }}</td>
+                <td class="table-cell">{{ '@' + creator.username if creator.username else 'N/A' }}</td>
+                <td class="table-cell font-mono">{{ creator.tg_user_id }}</td>
+                <td class="table-cell text-center font-bold">{{ creator.quiz_count }}</td>
+                <td class="table-cell">
+                    <a href="{{ url_for('quizzes_list', creator_id=creator.id) }}" 
+                       class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold py-1 px-3 rounded">
+                       View Quizzes
+                    </a>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="5" class="table-cell text-center text-gray-400">No creators found.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
