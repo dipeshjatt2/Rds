@@ -750,7 +750,14 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Create and play quizzes using Telegram’s built-in quiz polls."
         f"{owner_commands}"
     )
-    await update.effective_message.reply_text(text)
+    
+    # DEFINE THE KEYBOARD WITH YOUR CHANNEL LINK
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("join for more update", url="https://t.me/freepyquizbot")]
+    ])
+    
+    # SEND THE MESSAGE WITH THE KEYBOARD
+    await update.effective_message.reply_text(text, reply_markup=keyboard)
 
 
 async def create_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -807,7 +814,8 @@ async def no_images_command_handler(update: Update, context: ContextTypes.DEFAUL
             db_execute("INSERT INTO questions (quiz_id, idx, q_json) VALUES (?,?,?)", (quiz_id, idx, questions_to_json(q)))
         
         del ongoing_sessions[key]
-        await update.effective_message.reply_text(f"✅ Quiz created with id `{quiz_id}` (time per question: {state.get('time_per_question_sec')}s, negative: {state.get('negative')})", parse_mode=ParseMode.MARKDOWN)
+        # Instead of the old text message, we now call the function to post the quiz card
+        await post_quiz_card(context.bot, update.effective_chat.id, quiz_id, context)
 
 async def create_flow_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != 'private':
