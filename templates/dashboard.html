@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Quiz Management</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100">
+    <nav class="bg-blue-600 text-white p-4">
+        <div class="container mx-auto flex justify-between items-center">
+            <h1 class="text-xl font-bold">Quiz Management System</h1>
+            <div>
+                <a href="{{ url_for('dashboard') }}" class="mx-2 hover:text-blue-200">Dashboard</a>
+                <a href="{{ url_for('creators') }}" class="mx-2 hover:text-blue-200">Creators</a>
+                <a href="{{ url_for('quizzes') }}" class="mx-2 hover:text-blue-200">Quizzes</a>
+                <a href="{{ url_for('attempts') }}" class="mx-2 hover:text-blue-200">Attempts</a>
+                <a href="{{ url_for('logout') }}" class="mx-2 hover:text-blue-200">Logout</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mx-auto p-6">
+        <h2 class="text-3xl font-bold mb-6 text-gray-800">Dashboard</h2>
+        
+        <!-- Statistics Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <div class="bg-white p-6 rounded-lg shadow-md">
+                <h3 class="text-lg font-semibold text-gray-600">Total Quizzes</h3>
+                <p class="text-3xl font-bold text-blue-600">{{ total_quizzes }}</p>
+            </div>
+            <div class="bg-white p-6 rounded-lg shadow-md">
+                <h3 class="text-lg font-semibold text-gray-600">Total Creators</h3>
+                <p class="text-3xl font-bold text-green-600">{{ total_creators }}</p>
+            </div>
+            <div class="bg-white p-6 rounded-lg shadow-md">
+                <h3 class="text-lg font-semibold text-gray-600">Total Attempts</h3>
+                <p class="text-3xl font-bold text-purple-600">{{ total_attempts }}</p>
+            </div>
+            <div class="bg-white p-6 rounded-lg shadow-md">
+                <h3 class="text-lg font-semibold text-gray-600">Total Questions</h3>
+                <p class="text-3xl font-bold text-orange-600">{{ total_questions }}</p>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Recent Quizzes -->
+            <div class="bg-white p-6 rounded-lg shadow-md">
+                <h3 class="text-xl font-semibold mb-4 text-gray-800">Recent Quizzes</h3>
+                <div class="space-y-3">
+                    {% for quiz in recent_quizzes %}
+                    <div class="border-b pb-3">
+                        <a href="{{ url_for('quiz_detail', quiz_id=quiz['id']) }}" 
+                           class="font-semibold text-blue-600 hover:text-blue-800">
+                            {{ quiz['title'] }}
+                        </a>
+                        <p class="text-sm text-gray-600">
+                            by {{ quiz['username'] or quiz['display_name'] or 'Unknown' }}
+                        </p>
+                        <p class="text-xs text-gray-500">{{ quiz['created_at'][:16] }}</p>
+                    </div>
+                    {% endfor %}
+                </div>
+                <a href="{{ url_for('quizzes') }}" class="block text-center mt-4 text-blue-600 hover:text-blue-800">
+                    View All Quizzes →
+                </a>
+            </div>
+
+            <!-- Recent Attempts -->
+            <div class="bg-white p-6 rounded-lg shadow-md">
+                <h3 class="text-xl font-semibold mb-4 text-gray-800">Recent Attempts</h3>
+                <div class="space-y-3">
+                    {% for attempt in recent_attempts %}
+                    <div class="border-b pb-3">
+                        <a href="{{ url_for('attempt_detail', attempt_id=attempt['id']) }}" 
+                           class="font-semibold text-blue-600 hover:text-blue-800">
+                            {{ attempt['quiz_title'] }}
+                        </a>
+                        <p class="text-sm text-gray-600">
+                            User: {{ attempt['username'] or attempt['user_id'] }}
+                            {% if attempt['score'] is not none %}
+                            - Score: {{ "%.2f"|format(attempt['score']) }}/{{ attempt['max_score'] }}
+                            {% endif %}
+                        </p>
+                        <p class="text-xs text-gray-500">{{ attempt['started_at'][:16] }}</p>
+                    </div>
+                    {% endfor %}
+                </div>
+                <a href="{{ url_for('attempts') }}" class="block text-center mt-4 text-blue-600 hover:text-blue-800">
+                    View All Attempts →
+                </a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
